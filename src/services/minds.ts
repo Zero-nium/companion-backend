@@ -1,9 +1,6 @@
-// src/services/minds.ts
 import {
   createMindsClient,
   MindsClient,
-  BuilderMind,
-  MessageRecord,
 } from '@animocabrands/minds-client-lib';
 
 let client: MindsClient | null = null;
@@ -19,9 +16,13 @@ function getClient(): MindsClient {
 
 export async function resolveMindId(email: string): Promise<string | null> {
   const c = getClient();
-  const minds: BuilderMind[] = await c.listMinds();
-  const found = minds.find(
-    (m) => m.email?.toLowerCase() === email.toLowerCase()
+  const minds = await c.listMinds();
+
+  // use 'any' to safely access properties
+  const found = (minds as any[]).find(
+    (m: any) =>
+      typeof m.email === 'string' &&
+      m.email.toLowerCase() === email.toLowerCase()
   );
   return found?.mindId ?? null;
 }
@@ -43,7 +44,7 @@ export async function sendAndWaitReply(
   const c = getClient();
   await c.ensureConversation(alias, mindId);
 
-  const before = await c.getLatestHistoryFingerprint(alias);
+  const before = (await c.getLatestHistoryFingerprint(alias)) ?? '';
   await c.sendMessage({ alias, messageText });
 
   const outcome = await c.waitForReply({
@@ -53,10 +54,10 @@ export async function sendAndWaitReply(
     sentMessageText: messageText,
   });
 
-  if (outcome.timedOut) {
+  if (outcome.timedOut || !outcome.reply?.messageText) {
     throw new Error(`Poly did not reply within ${timeoutMs / 1000} seconds.`);
   }
-  return outcome.reply!.messageText;
+  return outcome.reply.messageText;
 }
 
 export async function sendMessage(
@@ -73,12 +74,13 @@ export async function getHistory(
   alias: string,
   after?: string,
   limit = 50
-): Promise<MessageRecord[]> {
+): Promise<any[]> {
   const c = getClient();
   return c.getHistory(alias, { limit, after });
 }
 
 export async function getLatestFingerprint(alias: string): Promise<string> {
   const c = getClient();
-  return c.getLatestHistoryFingerprint(alias);
+  const fp = await c.getLatestHistoryFingerprint(alias);
+  return fp ?? '';
 }
