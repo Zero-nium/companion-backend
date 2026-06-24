@@ -1,24 +1,22 @@
-import {
-  createMindsClient,
-  MindsClient,
-} from '@animocabrands/minds-client-lib';
+// src/services/minds.ts
 
-let client: MindsClient | null = null;
+let clientPromise: Promise<any> | null = null;
 
-function getClient(): MindsClient {
-  if (!client) {
-    client = createMindsClient({
-      builderApiKey: process.env.MINDS_BUILDER_API_KEY!,
+async function getClient(): Promise<any> {
+  if (!clientPromise) {
+    clientPromise = import('@animocabrands/minds-client-lib').then((mod) => {
+      return mod.createMindsClient({
+        builderApiKey: process.env.MINDS_BUILDER_API_KEY!,
+      });
     });
   }
-  return client;
+  return clientPromise;
 }
 
 export async function resolveMindId(email: string): Promise<string | null> {
-  const c = getClient();
-  const minds = await c.listMinds();
+  const client = await getClient();
+  const minds = await client.listMinds();
 
-  // use 'any' to safely access properties
   const found = (minds as any[]).find(
     (m: any) =>
       typeof m.email === 'string' &&
@@ -31,8 +29,8 @@ export async function ensureConversation(
   alias: string,
   mindId: string
 ): Promise<void> {
-  const c = getClient();
-  await c.ensureConversation(alias, mindId);
+  const client = await getClient();
+  await client.ensureConversation(alias, mindId);
 }
 
 export async function sendAndWaitReply(
@@ -41,13 +39,13 @@ export async function sendAndWaitReply(
   messageText: string,
   timeoutMs = 180_000
 ): Promise<string> {
-  const c = getClient();
-  await c.ensureConversation(alias, mindId);
+  const client = await getClient();
+  await client.ensureConversation(alias, mindId);
 
-  const before = (await c.getLatestHistoryFingerprint(alias)) ?? '';
-  await c.sendMessage({ alias, messageText });
+  const before = (await client.getLatestHistoryFingerprint(alias)) ?? '';
+  await client.sendMessage({ alias, messageText });
 
-  const outcome = await c.waitForReply({
+  const outcome = await client.waitForReply({
     alias,
     timeoutMs,
     afterFingerprint: before,
@@ -65,9 +63,9 @@ export async function sendMessage(
   mindId: string,
   messageText: string
 ): Promise<void> {
-  const c = getClient();
-  await c.ensureConversation(alias, mindId);
-  await c.sendMessage({ alias, messageText });
+  const client = await getClient();
+  await client.ensureConversation(alias, mindId);
+  await client.sendMessage({ alias, messageText });
 }
 
 export async function getHistory(
@@ -75,12 +73,12 @@ export async function getHistory(
   after?: string,
   limit = 50
 ): Promise<any[]> {
-  const c = getClient();
-  return c.getHistory(alias, { limit, after });
+  const client = await getClient();
+  return client.getHistory(alias, { limit, after });
 }
 
 export async function getLatestFingerprint(alias: string): Promise<string> {
-  const c = getClient();
-  const fp = await c.getLatestHistoryFingerprint(alias);
+  const client = await getClient();
+  const fp = await client.getLatestHistoryFingerprint(alias);
   return fp ?? '';
 }
