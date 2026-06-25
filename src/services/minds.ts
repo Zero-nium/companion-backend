@@ -1,5 +1,5 @@
 // src/services/minds.ts
-const MINDS_CLIENT_LIB = '@animocabrands/minds-client-lib/dist/index.js'; // hides path from TS
+const MINDS_CLIENT_LIB = '@animocabrands/minds-client-lib'; // hides path from TS
 
 let clientPromise: Promise<any> | null = null;
 
