@@ -1,10 +1,11 @@
 // src/services/minds.ts
+const MINDS_CLIENT_LIB = '@animocabrands/minds-client-lib'; // hides path from TS
 
 let clientPromise: Promise<any> | null = null;
 
 async function getClient(): Promise<any> {
   if (!clientPromise) {
-    clientPromise = import('@animocabrands/minds-client-lib').then((mod) => {
+    clientPromise = import(MINDS_CLIENT_LIB).then((mod) => {
       return mod.createMindsClient({
         builderApiKey: process.env.MINDS_BUILDER_API_KEY!,
       });
