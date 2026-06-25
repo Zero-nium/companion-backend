@@ -1,7 +1,8 @@
 import express from 'express';
 import cors from 'cors';
-import inboundRoutes from './routes/inbound';
-import testMindRoutes from './routes/testMind';  
+import inboundRoutes from './routes/inbound.js';
+// import adminRoutes from './routes/admin.js'; // to be added later
+import testMindRoutes from './routes/testMind.js';
 
 const app = express();
 app.use(cors());
@@ -11,6 +12,7 @@ app.get('/api/health', (req, res) => {
 });
 app.use('/api', inboundRoutes);
 app.use('/api', testMindRoutes);
+// app.use('/api', adminRoutes); // to be added later
 
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {

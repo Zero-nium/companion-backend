@@ -1,6 +1,6 @@
 // src/routes/testMind.ts
 import { Router } from 'express';
-import { sendAndWaitReply, resolveMindId } from '../services/minds';
+import { sendAndWaitReply, resolveMindId } from '../services/minds.js';
 
 const router = Router();
 
