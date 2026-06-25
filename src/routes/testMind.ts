@@ -1,18 +1,13 @@
-// src/routes/testMind.ts
 import { Router } from 'express';
-import { sendAndWaitReply, resolveMindId } from '../services/minds.js';
+import { sendAndWaitReply } from '../services/minds.js';
 
 const router = Router();
 
 router.get('/test-mind', async (req, res) => {
   try {
-    const email = process.env.AGENT_EMAIL!;
-    const mindId = await resolveMindId(email);
-
+    const mindId = process.env.MIND_ID;
     if (!mindId) {
-      return res
-        .status(404)
-        .json({ error: `No Mind found with email ${email}` });
+      return res.status(400).json({ error: 'MIND_ID not set in environment' });
     }
 
     const reply = await sendAndWaitReply(
