@@ -14,7 +14,7 @@ app.get('/api/health', (req, res) => {
 app.use('/api', inboundRoutes);
 app.use('/api', testMindRoutes);
 // app.use('/api', adminRoutes); // to be added later
-app.use('/api', genesisRoutes);
+app.use('/api/admin', genesisRoutes);
 
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
