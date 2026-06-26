@@ -16,7 +16,7 @@ router.post('/genesis', async (req, res) => {
       return res.status(400).json({ error: 'mindId is required' });
     }
 
-    // --- Step 1: Visual DNA ---
+    // Step 1: Visual DNA
     const visualPrompt = `You are creating your visual identity. Reply with ONLY a JSON object inside a code block (\`\`\`json ... \`\`\`). Do not add any other text.
 
 The JSON must contain the following fields with allowed values:
@@ -48,21 +48,25 @@ Choose values that represent who you are.`;
 
     const visualReply = await sendAndWaitReply('genesis-visual', mindId, visualPrompt, 300000);
 
-    // Extract JSON
     const jsonMatch = visualReply.match(/```json\s*([\s\S]*?)\s*```/);
-    if (!jsonMatch) throw new Error('No JSON code block found in reply');
-    const preferenceDna = JSON.parse(jsonMatch[1]);
+    if (!jsonMatch) {
+      // Show a snippet of what Poly actually replied with
+      const preview = visualReply.substring(0, 500);
+      throw new Error(`No JSON code block found in reply. Raw reply preview: ${preview}`);
+    }
 
-    // --- Step 2: Personality Statement ---
+    const preferenceDna = JSON.parse(jsonMatch[1]);   // <-- THIS LINE WAS MISSING
+
+    // Step 2: Personality Statement
     const personalityPrompt = `Write a description of your personality, quirks, and how you relate to others. This will shape your soul and cannot be changed later. Write between 200 and 500 words in plain text. Do not include any formatting.`;
 
     const personalityReply = await sendAndWaitReply('genesis-personality', mindId, personalityPrompt, 300000);
 
-    // --- Step 3: Store in DB ---
+    // Step 3: Store in DB
     const { data: pal } = await supabase
       .from('pals')
       .insert({
-        mind_email: `${mindId}@hellominds.ai`, // or just mindId
+        mind_email: `${mindId}@hellominds.ai`,
         display_name: preferenceDna.display_name,
         preference_dna: preferenceDna,
         personality_statement: personalityReply,
