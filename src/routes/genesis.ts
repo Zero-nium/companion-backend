@@ -46,7 +46,7 @@ The JSON must contain the following fields with allowed values:
 }
 Choose values that represent who you are.`;
 
-    const visualReply = await sendAndWaitReply('genesis-visual', mindId, visualPrompt, 300000);
+    const visualReply = await sendAndWaitReply('genesis-visual', mindId, visualPrompt, 600000);
 
     const jsonMatch = visualReply.match(/```json\s*([\s\S]*?)\s*```/);
     if (!jsonMatch) {
@@ -60,7 +60,7 @@ Choose values that represent who you are.`;
     // Step 2: Personality Statement
     const personalityPrompt = `Write a description of your personality, quirks, and how you relate to others. This will shape your soul and cannot be changed later. Write between 200 and 500 words in plain text. Do not include any formatting.`;
 
-    const personalityReply = await sendAndWaitReply('genesis-personality', mindId, personalityPrompt, 300000);
+    const personalityReply = await sendAndWaitReply('genesis-personality', mindId, personalityPrompt, 600000);
 
     // Step 3: Store in DB
     const { data: pal } = await supabase
