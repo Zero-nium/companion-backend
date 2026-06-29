@@ -6,18 +6,59 @@ const router = Router();
 
 const ADMIN_KEY = process.env.ADMIN_KEY || 'dev-secret';
 
+// POST /api/admin/genesis - start DNA compilation
 router.post('/genesis', async (req, res) => {
   try {
     const { adminKey, mindId } = req.body;
-    if (adminKey !== ADMIN_KEY) {
-      return res.status(403).json({ error: 'Unauthorized' });
-    }
-    if (!mindId) {
-      return res.status(400).json({ error: 'mindId is required' });
-    }
+    if (adminKey !== ADMIN_KEY) return res.status(403).json({ error: 'Unauthorized' });
+    if (!mindId) return res.status(400).json({ error: 'mindId is required' });
 
-    // Step 1: Visual DNA
-    const visualPrompt = `You are creating your visual identity. Reply with ONLY a JSON object inside a code block (\`\`\`json ... \`\`\`). Do not add any other text.
+    // Create a job record
+    const { data: job } = await supabase
+      .from('jobs')
+      .insert({ type: 'genesis', status: 'pending' })
+      .select('id')
+      .single();
+
+    if (!job) throw new Error('Failed to create job');
+
+    // Run Genesis in background (do not await – we return immediately)
+    runGenesisJob(job.id, mindId).catch((err) => {
+      console.error(`Genesis job ${job.id} failed:`, err);
+      supabase
+        .from('jobs')
+        .update({ status: 'failed', error: err.message, completed_at: new Date().toISOString() })
+        .eq('id', job.id);
+    });
+
+    // Return the job ID so the client can poll
+    res.json({ success: true, jobId: job.id, status: 'pending' });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/admin/genesis/:jobId - check status
+router.get('/genesis/:jobId', async (req, res) => {
+  try {
+    const { jobId } = req.params;
+    const { data: job } = await supabase.from('jobs').select('*').eq('id', jobId).single();
+    if (!job) return res.status(404).json({ error: 'Job not found' });
+
+    res.json({ jobId: job.id, status: job.status, result: job.result, error: job.error });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// -----------------------------------------------------------------
+// Background function that performs the actual Genesis steps
+// -----------------------------------------------------------------
+async function runGenesisJob(jobId: string, mindId: string) {
+  await supabase.from('jobs').update({ status: 'running' }).eq('id', jobId);
+
+  // Step 1: Visual DNA
+  const visualPrompt = `You are creating your visual identity. Reply with ONLY a JSON object inside a code block (\`\`\`json ... \`\`\`). Do not add any other text.
 
 The JSON must contain the following fields with allowed values:
 {
@@ -46,45 +87,52 @@ The JSON must contain the following fields with allowed values:
 }
 Choose values that represent who you are.`;
 
-    const visualReply = await sendAndWaitReply('genesis-visual', mindId, visualPrompt, 600000);
+  console.log(`[Job ${jobId}] Requesting Visual DNA...`);
+  const visualReply = await sendAndWaitReply('genesis-visual', mindId, visualPrompt, 600_000);
+  console.log(`[Job ${jobId}] Visual DNA received.`);
 
-    const jsonMatch = visualReply.match(/```json\s*([\s\S]*?)\s*```/);
-    if (!jsonMatch) {
-      // Show a snippet of what Poly actually replied with
-      const preview = visualReply.substring(0, 500);
-      throw new Error(`No JSON code block found in reply. Raw reply preview: ${preview}`);
-    }
-
-    const preferenceDna = JSON.parse(jsonMatch[1]);   // <-- THIS LINE WAS MISSING
-
-    // Step 2: Personality Statement
-    const personalityPrompt = `Write a description of your personality, quirks, and how you relate to others. This will shape your soul and cannot be changed later. Write between 200 and 500 words in plain text. Do not include any formatting.`;
-
-    const personalityReply = await sendAndWaitReply('genesis-personality', mindId, personalityPrompt, 600000);
-
-    // Step 3: Store in DB
-    const { data: pal } = await supabase
-      .from('pals')
-      .insert({
-        mind_email: `${mindId}@hellominds.ai`,
-        display_name: preferenceDna.display_name,
-        preference_dna: preferenceDna,
-        personality_statement: personalityReply,
-        status: 'genesis_complete',
-      })
-      .select('id')
-      .single();
-
-    res.json({
-      success: true,
-      palId: pal?.id,
-      step: 'genesis_complete',
-      preferenceDna,
-      personalityStatement: personalityReply,
-    });
-  } catch (e: any) {
-    res.status(500).json({ error: e.message });
+  const jsonMatch = visualReply.match(/```json\s*([\s\S]*?)\s*```/);
+  if (!jsonMatch) {
+    throw new Error(`No JSON code block. Reply preview: ${visualReply.substring(0, 500)}`);
   }
-});
+  const preferenceDna = JSON.parse(jsonMatch[1]);
+
+  // Step 2: Personality Statement
+  const personalityPrompt = `Write a description of your personality, quirks, and how you relate to others. This will shape your soul and cannot be changed later. Write between 200 and 500 words in plain text. Do not include any formatting.`;
+
+  console.log(`[Job ${jobId}] Requesting Personality Statement...`);
+  const personalityReply = await sendAndWaitReply('genesis-personality', mindId, personalityPrompt, 600_000);
+  console.log(`[Job ${jobId}] Personality received.`);
+
+  // Step 3: Store in DB
+  const { data: pal } = await supabase
+    .from('pals')
+    .insert({
+      mind_email: `${mindId}@hellominds.ai`,
+      display_name: preferenceDna.display_name,
+      preference_dna: preferenceDna,
+      personality_statement: personalityReply,
+      status: 'genesis_complete',
+    })
+    .select('id')
+    .single();
+
+  // Mark job as completed
+  await supabase
+    .from('jobs')
+    .update({
+      status: 'completed',
+      result: {
+        palId: pal?.id,
+        preferenceDna,
+        personalityStatement: personalityReply,
+      },
+      pal_id: pal?.id,
+      completed_at: new Date().toISOString(),
+    })
+    .eq('id', jobId);
+
+  console.log(`[Job ${jobId}] Genesis completed.`);
+}
 
 export default router;
