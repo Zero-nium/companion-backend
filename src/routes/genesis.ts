@@ -46,6 +46,29 @@ router.post('/genesis', async (req, res) => {
 // ---------------------------------------------------------------
 // POST /api/admin/genesis/:jobId/continue – advance to next step
 // ---------------------------------------------------------------
+// GET /api/admin/genesis/:jobId – check job status
+router.get('/genesis/:jobId', async (req, res) => {
+  try {
+    const { jobId } = req.params;
+    const { data: job } = await supabase
+      .from('jobs')
+      .select('*')
+      .eq('id', jobId)
+      .single();
+
+    if (!job) return res.status(404).json({ error: 'Job not found' });
+
+    res.json({
+      jobId: job.id,
+      status: job.status,
+      result: job.result,
+      error: job.error,
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 router.post('/genesis/:jobId/continue', async (req, res) => {
   try {
     const { jobId } = req.params;
