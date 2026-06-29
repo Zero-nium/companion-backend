@@ -102,9 +102,14 @@ async function advanceJob(job: any): Promise<any> {
   // Check for new messages since last fingerprint
   const client = await getClient();
   const history = await getHistory(alias, lastFingerprint);
+  console.log(`[Job ${job.id}] Fetched ${history.length} messages since fingerprint "${lastFingerprint}"`);
+  history.forEach((m: any, i: number) => {
+    console.log(`[Job ${job.id}]   [${i}] role=${m.role}, text=${m.messageText?.substring(0, 80)}...`);
+  });
   const replies = (history as any[]).filter(
     (m: any) => m.role === 'assistant' || m.role === 'mind'
   );
+  console.log(`[Job ${job.id}] Found ${replies.length} replies from Mind.`);
   if (replies.length === 0) {
     // No reply yet – nothing to do
     return job;
@@ -130,6 +135,7 @@ async function advanceJob(job: any): Promise<any> {
 // Step handlers
 // ---------------------------------------------------------------
 async function processVisualDna(job: any, alias: string, mindId: string, replyText: string): Promise<any> {
+  console.log(`[Job ${job.id}] Processing Visual DNA reply...`);
   const jsonMatch = replyText.match(/```json\s*([\s\S]*?)\s*```/);
   if (!jsonMatch) {
     // Ask Poly to resend with proper formatting
@@ -158,6 +164,7 @@ async function processVisualDna(job: any, alias: string, mindId: string, replyTe
 
 async function processPersonality(job: any, alias: string, mindId: string, replyText: string): Promise<any> {
   // Send Render request
+  console.log(`[Job ${job.id}] Processing Visual DNA reply...`);
   const renderPrompt = getRenderPrompt();
   await sendMessage(alias, mindId, renderPrompt);
   const fingerprint = await getLatestFingerprint(alias);
@@ -177,6 +184,7 @@ async function processPersonality(job: any, alias: string, mindId: string, reply
 
 async function processRender(job: any, alias: string, mindId: string, replyText: string): Promise<any> {
   // Genesis complete – store everything
+  console.log(`[Job ${job.id}] Processing Visual DNA reply...`);
   const { preferenceDna, personalityStatement } = job.result;
   const { data: pal } = await supabase
     .from('pals')
