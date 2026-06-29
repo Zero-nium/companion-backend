@@ -135,33 +135,66 @@ async function advanceJob(job: any): Promise<any> {
 // Step handlers
 // ---------------------------------------------------------------
 async function processVisualDna(job: any, alias: string, mindId: string, replyText: string): Promise<any> {
-  console.log(`[Job ${job.id}] Processing Visual DNA reply...`);
-  // Strip HTML tags (e.g. <pre><code>)
-  const cleanedText = replyText.replace(/<[^>]*>/g, '');
-  const jsonMatch = replyText.match(/```json\s*([\s\S]*?)\s*```/);
-  if (!jsonMatch) {
-    // Ask Poly to resend with proper formatting
+  // Strip HTML tags and decode entities
+  const cleanedText = replyText
+    .replace(/<[^>]*>/g, '')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, '&')
+    .trim();
+
+  // First try to find a JSON code block
+  let jsonStr = '';
+  const codeMatch = cleanedText.match(/```json\s*([\s\S]*?)\s*```/);
+  if (codeMatch) {
+    jsonStr = codeMatch[1];
+  } else {
+    // No code block – try the entire text as JSON
+    if (cleanedText.startsWith('{') || cleanedText.startsWith('[')) {
+      jsonStr = cleanedText;
+    }
+  }
+
+  if (!jsonStr) {
+    console.log(`[Job ${job.id}] No JSON found in reply. Asking for resubmit.`);
     await sendMessage(alias, mindId, 'Please reply with ONLY the JSON object inside a code block (```json ... ```). No other text.');
+    const fingerprint = await getLatestFingerprint(alias);
     return supabase.from('jobs').update({
       status: 'visual_dna_sent',
-      result: { ...job.result, lastFingerprint: await getLatestFingerprint(alias) }
+      result: { ...job.result, lastFingerprint: fingerprint }
     }).eq('id', job.id).select('*').single();
   }
 
-  const preferenceDna = JSON.parse(jsonMatch[1]);
+  try {
+    const preferenceDna = JSON.parse(jsonStr);
+    console.log(`[Job ${job.id}] Visual DNA parsed successfully. Sending personality request...`);
 
-  // Send Personality Statement request
-  const personalityPrompt = getPersonalityPrompt();
-  await sendMessage(alias, mindId, personalityPrompt);
-  const fingerprint = await getLatestFingerprint(alias);
+    // Send Personality Statement request
+    const personalityPrompt = getPersonalityPrompt();
+    await sendMessage(alias, mindId, personalityPrompt);
+    const fingerprint = await getLatestFingerprint(alias);
 
-  // Update job
-  const { data: updatedJob } = await supabase.from('jobs').update({
-    status: 'personality_sent',
-    result: { ...job.result, step: 'personality', lastFingerprint: fingerprint, preferenceDna },
-  }).eq('id', job.id).select('*').single();
+    const { data: updatedJob } = await supabase.from('jobs').update({
+      status: 'personality_sent',
+      result: { ...job.result, step: 'personality', lastFingerprint: fingerprint, preferenceDna },
+    }).eq('id', job.id).select('*').single();
 
-  return updatedJob;
+    console.log(`[Job ${job.id}] Advanced to personality_sent.`);
+    return updatedJob;
+  } catch (parseError: any) {
+    console.error(`[Job ${job.id}] JSON parse error:`, parseError.message);
+    // Ask for correction
+    await sendMessage(alias, mindId, `Your JSON is invalid: ${parseError.message}. Please fix and resubmit using a code block with three backticks and the word json, like this:
+
+      \`\`\`json
+      { ... your corrected JSON ... }
+      \`\`\``);
+    const fingerprint = await getLatestFingerprint(alias);
+    return supabase.from('jobs').update({
+      status: 'visual_dna_sent',
+      result: { ...job.result, lastFingerprint: fingerprint }
+    }).eq('id', job.id).select('*').single();
+  }
 }
 
 async function processPersonality(job: any, alias: string, mindId: string, replyText: string): Promise<any> {
