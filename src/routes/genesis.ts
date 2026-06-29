@@ -107,7 +107,7 @@ async function advanceJob(job: any): Promise<any> {
     console.log(`[Job ${job.id}]   [${i}] role=${m.role}, text=${m.messageText?.substring(0, 80)}...`);
   });
   const replies = (history as any[]).filter(
-    (m: any) => m.role === 'assistant' || m.role === 'mind'
+    (m: any) => m.role !== 'user' && m.role !== 'system'
   );
   console.log(`[Job ${job.id}] Found ${replies.length} replies from Mind.`);
   if (replies.length === 0) {
@@ -136,6 +136,8 @@ async function advanceJob(job: any): Promise<any> {
 // ---------------------------------------------------------------
 async function processVisualDna(job: any, alias: string, mindId: string, replyText: string): Promise<any> {
   console.log(`[Job ${job.id}] Processing Visual DNA reply...`);
+  // Strip HTML tags (e.g. <pre><code>)
+  const cleanedText = replyText.replace(/<[^>]*>/g, '');
   const jsonMatch = replyText.match(/```json\s*([\s\S]*?)\s*```/);
   if (!jsonMatch) {
     // Ask Poly to resend with proper formatting
