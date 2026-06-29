@@ -210,7 +210,7 @@ async function processPersonality(job: any, alias: string, mindId: string, reply
       ...job.result,
       step: 'render',
       lastFingerprint: fingerprint,
-      personalityStatement: replyText,
+      personalityStatement: replyText.replace(/<[^>]*>/g, ''),
     },
   }).eq('id', job.id).select('*').single();
 
