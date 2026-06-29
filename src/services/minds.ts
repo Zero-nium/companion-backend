@@ -3,7 +3,7 @@ const MINDS_CLIENT_LIB = '@animocabrands/minds-client-lib'; // hides path from T
 
 let clientPromise: Promise<any> | null = null;
 
-async function getClient(): Promise<any> {
+export async function getClient(): Promise<any> {
   if (!clientPromise) {
     clientPromise = import(MINDS_CLIENT_LIB).then((mod) => {
       return mod.createMindsClient({

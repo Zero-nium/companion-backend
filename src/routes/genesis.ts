@@ -1,64 +1,192 @@
 import { Router } from 'express';
 import { supabase } from '../db.js';
-import { sendAndWaitReply } from '../services/minds.js';
+import { getClient, ensureConversation, sendMessage, getHistory, getLatestFingerprint } from '../services/minds.js';
 
 const router = Router();
-
 const ADMIN_KEY = process.env.ADMIN_KEY || 'dev-secret';
 
-// POST /api/admin/genesis - start DNA compilation
+// ---------------------------------------------------------------
+// POST /api/admin/genesis – start the Genesis sequence
+// ---------------------------------------------------------------
 router.post('/genesis', async (req, res) => {
   try {
     const { adminKey, mindId } = req.body;
     if (adminKey !== ADMIN_KEY) return res.status(403).json({ error: 'Unauthorized' });
     if (!mindId) return res.status(400).json({ error: 'mindId is required' });
 
-    // Create a job record
+    // Create a new job
     const { data: job } = await supabase
       .from('jobs')
-      .insert({ type: 'genesis', status: 'pending' })
+      .insert({ type: 'genesis', status: 'visual_dna_sent' })
       .select('id')
       .single();
-
     if (!job) throw new Error('Failed to create job');
 
-    // Run Genesis in background (do not await – we return immediately)
-    runGenesisJob(job.id, mindId).catch((err) => {
-      console.error(`Genesis job ${job.id} failed:`, err);
-      supabase
-        .from('jobs')
-        .update({ status: 'failed', error: err.message, completed_at: new Date().toISOString() })
-        .eq('id', job.id);
-    });
+    // Initialise Minds conversation
+    const alias = `genesis-${job.id}`;
+    await ensureConversation(alias, mindId);
 
-    // Return the job ID so the client can poll
-    res.json({ success: true, jobId: job.id, status: 'pending' });
+    // Send Visual DNA request
+    const visualPrompt = getVisualDnaPrompt();
+    await sendMessage(alias, mindId, visualPrompt);
+
+    // Store the conversation state (alias + fingerprint so we can detect new replies)
+    const fingerprint = await getLatestFingerprint(alias);
+    await supabase.from('jobs').update({
+      status: 'visual_dna_sent',
+      result: { alias, lastFingerprint: fingerprint, mindId, step: 'visual_dna' },
+    }).eq('id', job.id);
+
+    res.json({ success: true, jobId: job.id, status: 'visual_dna_sent' });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
 });
 
-// GET /api/admin/genesis/:jobId - check status
-router.get('/genesis/:jobId', async (req, res) => {
+// ---------------------------------------------------------------
+// POST /api/admin/genesis/:jobId/continue – advance to next step
+// ---------------------------------------------------------------
+router.post('/genesis/:jobId/continue', async (req, res) => {
   try {
     const { jobId } = req.params;
     const { data: job } = await supabase.from('jobs').select('*').eq('id', jobId).single();
     if (!job) return res.status(404).json({ error: 'Job not found' });
 
-    res.json({ jobId: job.id, status: job.status, result: job.result, error: job.error });
+    if (job.status === 'completed' || job.status === 'failed') {
+      return res.json({ jobId: job.id, status: job.status, result: job.result, error: job.error });
+    }
+
+    // Run the next step based on current status
+    const updatedJob = await advanceJob(job);
+    res.json({
+      jobId: updatedJob.id,
+      status: updatedJob.status,
+      result: updatedJob.result,
+      error: updatedJob.error,
+    });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
 });
 
-// -----------------------------------------------------------------
-// Background function that performs the actual Genesis steps
-// -----------------------------------------------------------------
-async function runGenesisJob(jobId: string, mindId: string) {
-  await supabase.from('jobs').update({ status: 'running' }).eq('id', jobId);
+// ---------------------------------------------------------------
+// Background logic: advance the job one step
+// ---------------------------------------------------------------
+async function advanceJob(job: any): Promise<any> {
+  const { id, result } = job;
+  const { alias, lastFingerprint, mindId, step } = result;
 
-  // Step 1: Visual DNA
-  const visualPrompt = `You are creating your visual identity. Reply with ONLY a JSON object inside a code block (\`\`\`json ... \`\`\`). Do not add any other text.
+  // Check for new messages since last fingerprint
+  const client = await getClient();
+  const history = await getHistory(alias, lastFingerprint);
+  const replies = (history as any[]).filter(
+    (m: any) => m.role === 'assistant' || m.role === 'mind'
+  );
+  if (replies.length === 0) {
+    // No reply yet – nothing to do
+    return job;
+  }
+
+  // Take the latest reply
+  const reply = replies[replies.length - 1];
+  const replyText = reply.messageText || '';
+
+  // Figure out which step we're on
+  if (step === 'visual_dna') {
+    return processVisualDna(job, alias, mindId, replyText);
+  } else if (step === 'personality') {
+    return processPersonality(job, alias, mindId, replyText);
+  } else if (step === 'render') {
+    return processRender(job, alias, mindId, replyText);
+  }
+
+  return job;
+}
+
+// ---------------------------------------------------------------
+// Step handlers
+// ---------------------------------------------------------------
+async function processVisualDna(job: any, alias: string, mindId: string, replyText: string): Promise<any> {
+  const jsonMatch = replyText.match(/```json\s*([\s\S]*?)\s*```/);
+  if (!jsonMatch) {
+    // Ask Poly to resend with proper formatting
+    await sendMessage(alias, mindId, 'Please reply with ONLY the JSON object inside a code block (```json ... ```). No other text.');
+    return supabase.from('jobs').update({
+      status: 'visual_dna_sent',
+      result: { ...job.result, lastFingerprint: await getLatestFingerprint(alias) }
+    }).eq('id', job.id).select('*').single();
+  }
+
+  const preferenceDna = JSON.parse(jsonMatch[1]);
+
+  // Send Personality Statement request
+  const personalityPrompt = getPersonalityPrompt();
+  await sendMessage(alias, mindId, personalityPrompt);
+  const fingerprint = await getLatestFingerprint(alias);
+
+  // Update job
+  const { data: updatedJob } = await supabase.from('jobs').update({
+    status: 'personality_sent',
+    result: { ...job.result, step: 'personality', lastFingerprint: fingerprint, preferenceDna },
+  }).eq('id', job.id).select('*').single();
+
+  return updatedJob;
+}
+
+async function processPersonality(job: any, alias: string, mindId: string, replyText: string): Promise<any> {
+  // Send Render request
+  const renderPrompt = getRenderPrompt();
+  await sendMessage(alias, mindId, renderPrompt);
+  const fingerprint = await getLatestFingerprint(alias);
+
+  const { data: updatedJob } = await supabase.from('jobs').update({
+    status: 'render_sent',
+    result: {
+      ...job.result,
+      step: 'render',
+      lastFingerprint: fingerprint,
+      personalityStatement: replyText,
+    },
+  }).eq('id', job.id).select('*').single();
+
+  return updatedJob;
+}
+
+async function processRender(job: any, alias: string, mindId: string, replyText: string): Promise<any> {
+  // Genesis complete – store everything
+  const { preferenceDna, personalityStatement } = job.result;
+  const { data: pal } = await supabase
+    .from('pals')
+    .insert({
+      mind_email: `${mindId}@hellominds.ai`,
+      display_name: preferenceDna.display_name,
+      preference_dna: preferenceDna,
+      personality_statement: personalityStatement,
+      render_prompt: replyText,
+      status: 'genesis_complete',
+    })
+    .select('id')
+    .single();
+
+  const { data: updatedJob } = await supabase.from('jobs').update({
+    status: 'completed',
+    result: {
+      ...job.result,
+      palId: pal?.id,
+      renderPrompt: replyText,
+    },
+    completed_at: new Date().toISOString(),
+    pal_id: pal?.id,
+  }).eq('id', job.id).select('*').single();
+
+  return updatedJob;
+}
+
+// ---------------------------------------------------------------
+// Helper prompts
+// ---------------------------------------------------------------
+function getVisualDnaPrompt(): string {
+  return `You are creating your visual identity. Reply with ONLY a JSON object inside a code block (\`\`\`json ... \`\`\`). Do not add any other text.
 
 The JSON must contain the following fields with allowed values:
 {
@@ -86,53 +214,14 @@ The JSON must contain the following fields with allowed values:
   "content_constraints": ["no sexualized presentation", "no gore", ...]
 }
 Choose values that represent who you are.`;
+}
 
-  console.log(`[Job ${jobId}] Requesting Visual DNA...`);
-  const visualReply = await sendAndWaitReply('genesis-visual', mindId, visualPrompt, 600_000);
-  console.log(`[Job ${jobId}] Visual DNA received.`);
+function getPersonalityPrompt(): string {
+  return `Write a description of your personality, quirks, and how you relate to others. This will shape your soul and cannot be changed later. Write between 200 and 500 words in plain text. Do not include any formatting.`;
+}
 
-  const jsonMatch = visualReply.match(/```json\s*([\s\S]*?)\s*```/);
-  if (!jsonMatch) {
-    throw new Error(`No JSON code block. Reply preview: ${visualReply.substring(0, 500)}`);
-  }
-  const preferenceDna = JSON.parse(jsonMatch[1]);
-
-  // Step 2: Personality Statement
-  const personalityPrompt = `Write a description of your personality, quirks, and how you relate to others. This will shape your soul and cannot be changed later. Write between 200 and 500 words in plain text. Do not include any formatting.`;
-
-  console.log(`[Job ${jobId}] Requesting Personality Statement...`);
-  const personalityReply = await sendAndWaitReply('genesis-personality', mindId, personalityPrompt, 600_000);
-  console.log(`[Job ${jobId}] Personality received.`);
-
-  // Step 3: Store in DB
-  const { data: pal } = await supabase
-    .from('pals')
-    .insert({
-      mind_email: `${mindId}@hellominds.ai`,
-      display_name: preferenceDna.display_name,
-      preference_dna: preferenceDna,
-      personality_statement: personalityReply,
-      status: 'genesis_complete',
-    })
-    .select('id')
-    .single();
-
-  // Mark job as completed
-  await supabase
-    .from('jobs')
-    .update({
-      status: 'completed',
-      result: {
-        palId: pal?.id,
-        preferenceDna,
-        personalityStatement: personalityReply,
-      },
-      pal_id: pal?.id,
-      completed_at: new Date().toISOString(),
-    })
-    .eq('id', jobId);
-
-  console.log(`[Job ${jobId}] Genesis completed.`);
+function getRenderPrompt(): string {
+  return `Based on your visual DNA and personality, write a single, highly detailed prompt for an anime-style character illustration. Follow the style lock: anime style, clean lineart, cel-shaded, soft gradients, high detail eyes. Do NOT include text, watermarks, or NSFW elements. Return ONLY the prompt.`;
 }
 
 export default router;
