@@ -5,6 +5,7 @@ import inboundRoutes from './routes/inbound.js';
 import testMindRoutes from './routes/testMind.js';
 import genesisRoutes from './routes/genesis.js';
 import testImageRoutes from './routes/testImage.js';
+import checkImageRoutes from './routes/checkImage.js';
 
 const app = express();
 app.use(cors());
@@ -17,6 +18,7 @@ app.use('/api', testMindRoutes);
 // app.use('/api', adminRoutes); // to be added later
 app.use('/api/admin', genesisRoutes);
 app.use('/api', testImageRoutes);
+app.use('/api', checkImageRoutes);
 
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
