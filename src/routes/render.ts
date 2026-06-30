@@ -12,10 +12,49 @@ import {
 const router = Router();
 const ADMIN_KEY = process.env.ADMIN_KEY || 'dev-secret';
 
-// POST /api/admin/render
-router.post('/render', async (req, res) => { /* unchanged */ });
+// -----------------------------------------------------------------
+// POST /api/admin/render – start image generation
+// -----------------------------------------------------------------
+router.post('/render', async (req, res) => {
+  try {
+    const { adminKey, palId, prompt } = req.body;
+    if (adminKey !== ADMIN_KEY) return res.status(403).json({ error: 'Unauthorized' });
 
-// POST /api/admin/render/:jobId/continue
+    // Get the mindId for this pal
+    const { data: pal } = await supabase.from('pals').select('mind_email').eq('id', palId).single();
+    if (!pal) return res.status(404).json({ error: 'Pal not found' });
+
+    const mindId = pal.mind_email.split('@')[0];
+    const alias = `render-${palId}-${Date.now()}`;
+
+    // Ensure conversation and send the image request
+    await ensureConversation(alias, mindId);
+    await sendMessage(alias, mindId, `Generate an image using the following prompt and return it as an attachment:\n\n${prompt}`);
+    const fingerprint = await getLatestFingerprint(alias);
+
+    const { data: job } = await supabase
+      .from('jobs')
+      .insert({
+        type: 'render',
+        status: 'generating',
+        result: { alias, mindId, palId, prompt, lastFingerprint: fingerprint },
+      })
+      .select('id')
+      .single();
+
+    if (!job) throw new Error('Failed to create job');
+
+    console.log(`[Render] Job ${job.id} started, alias: ${alias}`);
+    res.json({ success: true, jobId: job.id, status: 'generating' });
+  } catch (e: any) {
+    console.error('[Render] POST error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// -----------------------------------------------------------------
+// POST /api/admin/render/:jobId/continue – check for artifact
+// -----------------------------------------------------------------
 router.post('/render/:jobId/continue', async (req, res) => {
   try {
     const { jobId } = req.params;
@@ -28,6 +67,7 @@ router.post('/render/:jobId/continue', async (req, res) => {
     const { alias, mindId, palId, lastFingerprint } = job.result;
     const client = await getClient();
     const history = await getHistory(alias, lastFingerprint);
+    console.log(`[Render ${jobId}] Fetched ${history.length} messages`);
 
     const replies = history.filter((m: any) => m.role !== 'user' && m.role !== 'system');
     if (replies.length === 0) {
@@ -36,14 +76,15 @@ router.post('/render/:jobId/continue', async (req, res) => {
     }
 
     const replyText = replies[replies.length - 1].messageText || '';
-    console.log(`[Render ${jobId}] Reply received: ${replyText.substring(0, 200)}`);
+    console.log(`[Render ${jobId}] Reply: ${replyText.substring(0, 200)}`);
 
-    // Extract artifact ID from reply
+    // Look for artifact:// link in reply
     const artifactMatch = replyText.match(/artifact:\/\/([a-f0-9-]+)/);
     if (!artifactMatch) {
+      // Poly replied but no artifact
       await supabase.from('jobs').update({
         status: 'failed',
-        error: 'No artifact:// link found in reply.',
+        error: 'No artifact:// link in reply.',
         result: { ...job.result, reply: replyText },
       }).eq('id', jobId);
       return res.json({ jobId, status: 'failed', reply: replyText });
@@ -52,17 +93,17 @@ router.post('/render/:jobId/continue', async (req, res) => {
     const artifactId = artifactMatch[1];
     console.log(`[Render ${jobId}] Found artifact ID: ${artifactId}`);
 
-    // Fetch artifact from Minds
+    // Fetch the artifact
     const artifactData = await getArtifact(alias, artifactId);
     if (!artifactData) {
       await supabase.from('jobs').update({
         status: 'failed',
-        error: 'Failed to fetch artifact from Minds.',
+        error: 'Failed to fetch artifact.',
       }).eq('id', jobId);
       return res.json({ jobId, status: 'failed' });
     }
 
-    // Decode and upload
+    // Upload to Supabase Storage
     const imageBuffer = Buffer.from(artifactData.body, 'base64');
     const extension = artifactData.mimeType === 'image/png' ? 'png' : 'jpg';
     const fileName = `${palId}/${Date.now()}.${extension}`;
@@ -76,7 +117,10 @@ router.post('/render/:jobId/continue', async (req, res) => {
     const { data: publicUrl } = supabase.storage.from('avatars').getPublicUrl(fileName);
     const avatarUrl = publicUrl.publicUrl;
 
+    // Save avatar URL to pal
     await supabase.from('pals').update({ avatar_url: avatarUrl }).eq('id', palId);
+
+    // Mark job complete
     await supabase.from('jobs').update({
       status: 'completed',
       result: { ...job.result, avatarUrl },
@@ -84,10 +128,10 @@ router.post('/render/:jobId/continue', async (req, res) => {
       completed_at: new Date().toISOString(),
     }).eq('id', jobId);
 
-    console.log(`[Render ${jobId}] Completed. Avatar URL: ${avatarUrl}`);
+    console.log(`[Render ${jobId}] Completed! Avatar: ${avatarUrl}`);
     res.json({ jobId, status: 'completed', avatarUrl });
   } catch (e: any) {
-    console.error(`[Render] Error:`, e);
+    console.error(`[Render] Continue error:`, e);
     res.status(500).json({ error: e.message });
   }
 });
