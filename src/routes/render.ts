@@ -84,6 +84,15 @@ router.post('/render/:jobId/continue', async (req, res) => {
 
     const replyText = replies[replies.length - 1].messageText || '';
     console.log(`[Render ${jobId}] Reply: ${replyText.substring(0, 200)}`);
+    
+    // Log attachment details of the last reply
+    if (replies.length > 0) {
+      const lastMsg = replies[replies.length - 1];
+      if (lastMsg.attachments && lastMsg.attachments.length > 0) {
+        console.log(`[Render ${jobId}] Attachment keys:`, Object.keys(lastMsg.attachments[0]));
+        console.log(`[Render ${jobId}] First attachment snippet:`, JSON.stringify(lastMsg.attachments[0]).substring(0, 300));
+      }
+    }
 
     // Look for artifact:// link in reply
     const artifactMatch = replyText.match(/artifact:\/\/([a-f0-9-]+)/);
