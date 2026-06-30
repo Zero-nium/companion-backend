@@ -67,7 +67,14 @@ router.post('/render/:jobId/continue', async (req, res) => {
     const { alias, mindId, palId, lastFingerprint } = job.result;
     const client = await getClient();
     const history = await getHistory(alias, lastFingerprint);
-    console.log(`[Render ${jobId}] Fetched ${history.length} messages`);
+    console.log(`[Render ${jobId}] History keys per message:`);
+    history.forEach((m: any, i: number) => {
+      const keys = Object.keys(m);
+      const hasArtifact = !!m.artifact;
+      const hasArtifacts = !!m.artifacts;
+      const attInfo = m.attachments ? `attachments[${m.attachments.length}]` : 'no attachments';
+      console.log(`[Render ${jobId}]   [${i}] keys=${keys.join(',')}, hasArtifact=${hasArtifact}, hasArtifacts=${hasArtifacts}, ${attInfo}, mimeType=${m.mimeType || 'none'}, artifactId=${m.artifactId || 'none'}`);
+    });
 
     const replies = history.filter((m: any) => m.role !== 'user' && m.role !== 'system');
     if (replies.length === 0) {
