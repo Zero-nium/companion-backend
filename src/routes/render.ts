@@ -81,7 +81,6 @@ router.post('/render/:jobId/continue', async (req, res) => {
     // Look for artifact:// link in reply
     const artifactMatch = replyText.match(/artifact:\/\/([a-f0-9-]+)/);
     if (!artifactMatch) {
-      // Poly replied but no artifact
       await supabase.from('jobs').update({
         status: 'failed',
         error: 'No artifact:// link in reply.',
@@ -93,34 +92,35 @@ router.post('/render/:jobId/continue', async (req, res) => {
     const artifactId = artifactMatch[1];
     console.log(`[Render ${jobId}] Found artifact ID: ${artifactId}`);
 
-    // Fetch the artifact
-    const artifactData = await getArtifact(alias, artifactId);
-    if (!artifactData) {
+    // Find the message that contains the artifact
+    const artifactMessage = history.find((m: any) => m.artifactId === artifactId);
+    if (!artifactMessage || !artifactMessage.artifact) {
       await supabase.from('jobs').update({
         status: 'failed',
-        error: 'Failed to fetch artifact.',
+        error: 'Artifact not found on any message.',
+        result: { ...job.result, reply: replyText },
       }).eq('id', jobId);
-      return res.json({ jobId, status: 'failed' });
+      return res.json({ jobId, status: 'failed', error: 'Artifact missing from message' });
     }
 
+    console.log(`[Render ${jobId}] Artifact found, type: ${artifactMessage.mimeType}, size: ${artifactMessage.artifact?.length || 0}`);
+
     // Upload to Supabase Storage
-    const imageBuffer = Buffer.from(artifactData.body, 'base64');
-    const extension = artifactData.mimeType === 'image/png' ? 'png' : 'jpg';
+    const imageBuffer = Buffer.from(artifactMessage.artifact, 'base64');
+    const mimeType = artifactMessage.mimeType || 'image/png';
+    const extension = artifactMessage.extension || (mimeType === 'image/png' ? 'png' : 'jpg');
     const fileName = `${palId}/${Date.now()}.${extension}`;
 
     const { error: uploadError } = await supabase.storage
       .from('avatars')
-      .upload(fileName, imageBuffer, { contentType: artifactData.mimeType, upsert: true });
+      .upload(fileName, imageBuffer, { contentType: mimeType, upsert: true });
 
     if (uploadError) throw new Error(`Upload failed: ${uploadError.message}`);
 
     const { data: publicUrl } = supabase.storage.from('avatars').getPublicUrl(fileName);
     const avatarUrl = publicUrl.publicUrl;
 
-    // Save avatar URL to pal
     await supabase.from('pals').update({ avatar_url: avatarUrl }).eq('id', palId);
-
-    // Mark job complete
     await supabase.from('jobs').update({
       status: 'completed',
       result: { ...job.result, avatarUrl },
