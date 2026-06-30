@@ -15,23 +15,29 @@ router.post('/render', async (req, res) => {
     const { data: pal } = await supabase.from('pals').select('mind_email').eq('id', palId).single();
     if (!pal) return res.status(404).json({ error: 'Pal not found' });
 
-    const mindId = pal.mind_email.split('@')[0]; // or store mindId directly – we'll adapt
+    const mindId = pal.mind_email.split('@')[0];
     const alias = `render-${palId}-${Date.now()}`;
 
-    await ensureConversation(alias, mindId);
-    await sendMessage(alias, mindId, `Generate an image using the following prompt and return it as an attachment:\n\n${prompt}`);
-    const fingerprint = await getLatestFingerprint(alias);
+    try {
+      await ensureConversation(alias, mindId);
+      await sendMessage(alias, mindId, `Generate an image using the following prompt and return it as an attachment:\n\n${prompt}`);
+      const fingerprint = await getLatestFingerprint(alias);
+      console.log(`[Render] Alias ${alias} created, fingerprint: ${fingerprint}`);
 
-    const { data: job } = await supabase.from('jobs')
-      .insert({
-        type: 'render',
-        status: 'generating',
-        result: { alias, mindId, palId, prompt, lastFingerprint: fingerprint },
-      })
-      .select('id')
-      .single();
+      const { data: job } = await supabase.from('jobs')
+        .insert({
+          type: 'render',
+          status: 'generating',
+          result: { alias, mindId, palId, prompt, lastFingerprint: fingerprint },
+        })
+        .select('id')
+        .single();
 
-    res.json({ success: true, jobId: job!.id, status: 'generating' });
+      return res.json({ success: true, jobId: job!.id, status: 'generating' });
+    } catch (err: any) {
+      console.error(`[Render] Failed to send message:`, err.message);
+      return res.status(500).json({ error: err.message });
+    }
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
