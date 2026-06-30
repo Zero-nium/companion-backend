@@ -51,6 +51,13 @@ router.post('/render/:jobId/continue', async (req, res) => {
     const { alias, mindId, palId, lastFingerprint, prompt } = job.result;
     const client = await getClient();
     const history = await getHistory(alias, lastFingerprint);
+    
+    console.log(`[Render ${jobId}] Alias: ${alias}, fingerprint: ${lastFingerprint}`);
+    console.log(`[Render ${jobId}] Fetched ${history.length} messages`);
+    history.forEach((m: any, i: number) => {
+      console.log(`[Render ${jobId}]   [${i}] role=${m.role}, text=${m.messageText?.substring(0, 80)}..., hasArtifact=${!!m.artifact}`);
+    });
+
 
     // Find messages with artifacts
     const artifacts = history.filter((m: any) => m.artifact);
@@ -58,6 +65,9 @@ router.post('/render/:jobId/continue', async (req, res) => {
       // No artifact yet – check if Poly replied with an error or text
       const replies = history.filter((m: any) => m.role !== 'user' && m.role !== 'system');
       if (replies.length > 0) {
+        if (replies.length === 0) {
+          console.log(`[Render ${jobId}] No replies from Poly yet.`);
+        }
         // She replied, but no artifact. Mark as failed with the reply.
         await supabase.from('jobs').update({
           status: 'failed',
