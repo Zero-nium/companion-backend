@@ -5,7 +5,7 @@ const router = Router();
 
 router.get('/check-image', async (req, res) => {
   try {
-    const alias = 'test-image';
+    const alias = 'test-image-2';
     const client = await getClient();
     const history = await getHistory(alias, undefined, 10);
     // Log on the server side too
