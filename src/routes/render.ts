@@ -30,8 +30,10 @@ router.post('/render', async (req, res) => {
     // Ensure conversation and send the image request
     await ensureConversation(alias, mindId);
     await sendMessage(alias, mindId, `Generate an image using the following prompt and return it as an attachment:\n\n${prompt}`);
+    console.log(`[Render] Message sent successfully to alias ${alias}`);
     const fingerprint = await getLatestFingerprint(alias);
-
+    console.log(`[Render] Fingerprint after send: ${fingerprint}`);
+    
     const { data: job } = await supabase
       .from('jobs')
       .insert({
