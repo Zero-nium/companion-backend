@@ -83,3 +83,14 @@ export async function getLatestFingerprint(alias: string): Promise<string> {
   const fp = await client.getLatestHistoryFingerprint(alias);
   return fp ?? '';
 }
+
+export async function getArtifact(alias: string, artifactId: string): Promise<{ mimeType: string; body: string } | null> {
+  const client = await getClient();
+  try {
+    const artifact = await (client as any).getArtifact(alias, artifactId);
+    return { mimeType: artifact.mimeType || 'image/png', body: artifact.artifact || artifact.body };
+  } catch (e) {
+    console.error('getArtifact error:', e);
+    return null;
+  }
+}
