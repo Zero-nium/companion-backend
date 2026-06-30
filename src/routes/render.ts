@@ -65,16 +65,8 @@ router.post('/render/:jobId/continue', async (req, res) => {
     }
 
     const { alias, mindId, palId, lastFingerprint } = job.result;
-    const client = await getClient();
     const history = await getHistory(alias, lastFingerprint);
-    console.log(`[Render ${jobId}] History keys per message:`);
-    history.forEach((m: any, i: number) => {
-      const keys = Object.keys(m);
-      const hasArtifact = !!m.artifact;
-      const hasArtifacts = !!m.artifacts;
-      const attInfo = m.attachments ? `attachments[${m.attachments.length}]` : 'no attachments';
-      console.log(`[Render ${jobId}]   [${i}] keys=${keys.join(',')}, hasArtifact=${hasArtifact}, hasArtifacts=${hasArtifacts}, ${attInfo}, mimeType=${m.mimeType || 'none'}, artifactId=${m.artifactId || 'none'}`);
-    });
+    console.log(`[Render ${jobId}] Fetched ${history.length} messages`);
 
     const replies = history.filter((m: any) => m.role !== 'user' && m.role !== 'system');
     if (replies.length === 0) {
@@ -84,17 +76,8 @@ router.post('/render/:jobId/continue', async (req, res) => {
 
     const replyText = replies[replies.length - 1].messageText || '';
     console.log(`[Render ${jobId}] Reply: ${replyText.substring(0, 200)}`);
-    
-    // Log attachment details of the last reply
-    if (replies.length > 0) {
-      const lastMsg = replies[replies.length - 1];
-      if (lastMsg.attachments && lastMsg.attachments.length > 0) {
-        console.log(`[Render ${jobId}] Attachment keys:`, Object.keys(lastMsg.attachments[0]));
-        console.log(`[Render ${jobId}] First attachment snippet:`, JSON.stringify(lastMsg.attachments[0]).substring(0, 300));
-      }
-    }
 
-    // Look for artifact:// link in reply
+    // Look for artifact:// link
     const artifactMatch = replyText.match(/artifact:\/\/([a-f0-9-]+)/);
     if (!artifactMatch) {
       await supabase.from('jobs').update({
@@ -108,23 +91,25 @@ router.post('/render/:jobId/continue', async (req, res) => {
     const artifactId = artifactMatch[1];
     console.log(`[Render ${jobId}] Found artifact ID: ${artifactId}`);
 
-    // Find the message that contains the artifact
-    const artifactMessage = history.find((m: any) => m.artifactId === artifactId);
-    if (!artifactMessage || !artifactMessage.artifact) {
+    // Extract attachment
+    const lastReply = replies[replies.length - 1];
+    const attachments = lastReply.attachments || [];
+    const attachment = attachments.find((att: any) => att.artifactId === artifactId);
+    if (!attachment || !attachment.artifact) {
       await supabase.from('jobs').update({
         status: 'failed',
-        error: 'Artifact not found on any message.',
+        error: 'Artifact not found in attachments.',
         result: { ...job.result, reply: replyText },
       }).eq('id', jobId);
-      return res.json({ jobId, status: 'failed', error: 'Artifact missing from message' });
+      return res.json({ jobId, status: 'failed', error: 'Artifact missing from attachments' });
     }
 
-    console.log(`[Render ${jobId}] Artifact found, type: ${artifactMessage.mimeType}, size: ${artifactMessage.artifact?.length || 0}`);
+    console.log(`[Render ${jobId}] Artifact found, type: ${attachment.mimeType}, size: ${attachment.artifact?.length || 0}`);
 
     // Upload to Supabase Storage
-    const imageBuffer = Buffer.from(artifactMessage.artifact, 'base64');
-    const mimeType = artifactMessage.mimeType || 'image/png';
-    const extension = artifactMessage.extension || (mimeType === 'image/png' ? 'png' : 'jpg');
+    const imageBuffer = Buffer.from(attachment.artifact, 'base64');
+    const mimeType = attachment.mimeType || 'image/png';
+    const extension = attachment.extension || (mimeType === 'image/png' ? 'png' : 'jpg');
     const fileName = `${palId}/${Date.now()}.${extension}`;
 
     const { error: uploadError } = await supabase.storage
@@ -146,6 +131,7 @@ router.post('/render/:jobId/continue', async (req, res) => {
 
     console.log(`[Render ${jobId}] Completed! Avatar: ${avatarUrl}`);
     res.json({ jobId, status: 'completed', avatarUrl });
+
   } catch (e: any) {
     console.error(`[Render] Continue error:`, e);
     res.status(500).json({ error: e.message });
