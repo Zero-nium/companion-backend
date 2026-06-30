@@ -7,23 +7,16 @@ router.get('/check-image', async (req, res) => {
   try {
     const alias = 'test-image';
     const client = await getClient();
-    // Get the latest 10 messages
     const history = await getHistory(alias, undefined, 10);
-    // Filter for messages that contain artifacts
-    const artifacts = history.filter((m: any) => m.artifact);
+    // Log on the server side too
+    console.log('[check-image] raw history:', JSON.stringify(history).substring(0, 1000));
     res.json({
-      messageCount: history.length,
-      latestArtifacts: artifacts.map((m: any) => ({
-        artifactId: m.artifactId,
-        slug: m.slug,
-        mimeType: m.mimeType,
-        extension: m.extension,
-        messageText: m.messageText?.substring(0, 100),
-      })),
-      allMessages: history.map((m: any) => ({
+      count: history.length,
+      history: history.map((m: any) => ({
         role: m.role,
-        messageText: m.messageText?.substring(0, 80),
+        text: m.messageText?.substring(0, 100),
         hasArtifact: !!m.artifact,
+        artifactId: m.artifactId,
       })),
     });
   } catch (e: any) {
