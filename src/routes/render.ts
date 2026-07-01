@@ -66,13 +66,23 @@ router.post('/render/:jobId/continue', async (req, res) => {
       return res.json({ jobId: job.id, status: job.status, result: job.result, error: job.error });
     }
 
-    const { alias, mindId, palId, lastFingerprint } = job.result;
-    const history = await getHistory(alias, lastFingerprint);
-    console.log(`[Render ${jobId}] Fetched ${history.length} messages`);
+    const { alias, palId } = job.result;
+    const history = await getHistory(alias, undefined, 10); // no fingerprint, last 10 messages
+    console.log(`[Render ${jobId}] Fetched ${history.length} messages (unfiltered)`);
+
+    // Log each message briefly
+    history.forEach((m: any, i: number) => {
+      console.log(`[Render ${jobId}]   [${i}] role=${m.role}, text=${m.messageText?.substring(0, 50)}..., hasAttachments=${!!m.attachments}`);
+    });
 
     const replies = history.filter((m: any) => m.role !== 'user' && m.role !== 'system');
     if (replies.length === 0) {
-      console.log(`[Render ${jobId}] No reply yet.`);
+      // Still no reply; but now we can see if the user message exists
+      if (history.length > 0) {
+        console.log(`[Render ${jobId}] User message present, but Poly hasn't replied yet.`);
+      } else {
+        console.log(`[Render ${jobId}] No messages at all in conversation.`);
+      }
       return res.json({ jobId, status: 'generating' });
     }
 
