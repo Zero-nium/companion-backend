@@ -6,12 +6,11 @@ const router = Router();
 router.get('/render-direct', async (req, res) => {
   try {
     const mindId = process.env.MIND_ID!;
-    const prompt = req.query.prompt || 'Generate an anime portrait of a scholar.';
+    const prompt = (req.query.prompt as string) || 'Generate an anime portrait of a scholar.';
     const alias = 'render-direct-' + Date.now();
 
-    const reply = await sendAndWaitReply(alias, mindId, prompt, 600000); // 10 min
+    const reply = await sendAndWaitReply(alias, mindId, prompt, 600000); // 10 minutes
 
-    // Extract artifact URL if present
     const artifactMatch = reply.match(/artifact:\/\/([a-f0-9-]+)/);
     const artifactId = artifactMatch ? artifactMatch[1] : null;
 

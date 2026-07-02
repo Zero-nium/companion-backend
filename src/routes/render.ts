@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { supabase } from '../db.js';
-import { ensureConversation, sendMessage, getHistory, getClient } from '../services/minds.js';
+import { sendAndWaitReply, getHistory } from '../services/minds.js';
 
 const router = Router();
 const ADMIN_KEY = process.env.ADMIN_KEY || 'dev-secret';
@@ -60,77 +60,64 @@ router.get('/render/:jobId', async (req, res) => {
 async function runRenderJob(jobId: string, mindId: string, palId: string, prompt: string) {
   console.log(`[Render ${jobId}] Starting background render...`);
 
+  // Short alias to avoid Minds rejection
   const alias = `render-${Date.now()}`;
-  const { ensureConversation, sendMessage, getHistory, getLatestFingerprint } = await import('../services/minds.js');
+  const { sendAndWaitReply, getHistory } = await import('../services/minds.js');
 
-  // Ensure conversation and send the image request
-  await ensureConversation(alias, mindId);
-  await sendMessage(alias, mindId, `Generate an image using the following prompt and return it as an attachment:\n\n${prompt}`);
-  console.log(`[Render ${jobId}] Message sent. Waiting for reply...`);
+  // Send and wait for reply (up to 20 minutes – image generation can be slow)
+  const reply = await sendAndWaitReply(
+    alias,
+    mindId,
+    `Generate an image using the following prompt and return it as an attachment:\n\n${prompt}`,
+    1_200_000 // 20 minutes
+  );
 
-  // Poll every 30 seconds for a reply (up to 30 minutes)
-  const maxAttempts = 60; // 60 * 30s = 30 minutes
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    await new Promise((resolve) => setTimeout(resolve, 30_000));
-    console.log(`[Render ${jobId}] Polling attempt ${attempt + 1}...`);
+  console.log(`[Render ${jobId}] Reply received: ${reply.substring(0, 200)}`);
 
-    // Fetch recent history (no fingerprint) to catch any reply
-    const history = await getHistory(alias, undefined, 10);
-    const replies = history.filter((m: any) => m.role !== 'user' && m.role !== 'system');
-    if (replies.length === 0) continue;
+  // Extract artifact ID
+  const artifactMatch = reply.match(/artifact:\/\/([a-f0-9-]+)/);
+  if (!artifactMatch) {
+    throw new Error('No artifact:// link found in reply');
+  }
+  const artifactId = artifactMatch[1];
 
-    const replyText = replies[replies.length - 1].messageText || '';
-    console.log(`[Render ${jobId}] Reply found: ${replyText.substring(0, 200)}`);
-
-    // Look for artifact:// link
-    const artifactMatch = replyText.match(/artifact:\/\/([a-f0-9-]+)/);
-    if (!artifactMatch) {
-      throw new Error('No artifact:// link in reply');
-    }
-    const artifactId = artifactMatch[1];
-
-    // Find the attachment in history
-    const attachmentMessage = history.find((m: any) => m.artifactId === artifactId);
-    if (!attachmentMessage || !attachmentMessage.attachments) {
-      throw new Error('Attachment not found in history');
-    }
-    const attachment = attachmentMessage.attachments.find((att: any) => att.artifactId === artifactId);
-    if (!attachment || !attachment.artifact) {
-      throw new Error('Artifact body not found');
-    }
-
-    console.log(`[Render ${jobId}] Artifact found, type: ${attachment.mimeType}, size: ${attachment.artifact.length}`);
-
-    // Upload to Supabase Storage
-    const imageBuffer = Buffer.from(attachment.artifact, 'base64');
-    const mimeType = attachment.mimeType || 'image/png';
-    const extension = attachment.extension || (mimeType === 'image/png' ? 'png' : 'jpg');
-    const fileName = `${palId}/${Date.now()}.${extension}`;
-
-    const { error: uploadError } = await supabase.storage
-      .from('avatars')
-      .upload(fileName, imageBuffer, { contentType: mimeType, upsert: true });
-
-    if (uploadError) throw new Error(`Upload failed: ${uploadError.message}`);
-
-    const { data: publicUrl } = supabase.storage.from('avatars').getPublicUrl(fileName);
-    const avatarUrl = publicUrl.publicUrl;
-
-    // Update pal and job
-    await supabase.from('pals').update({ avatar_url: avatarUrl }).eq('id', palId);
-    await supabase.from('jobs').update({
-      status: 'completed',
-      result: { avatarUrl, palId },
-      pal_id: palId,
-      completed_at: new Date().toISOString(),
-    }).eq('id', jobId);
-
-    console.log(`[Render ${jobId}] Completed! Avatar: ${avatarUrl}`);
-    return; // success – exit loop
+  // Fetch the conversation history to get the attachment body
+  const history = await getHistory(alias, undefined, 10);
+  const attachmentMessage = history.find((m: any) => m.artifactId === artifactId);
+  if (!attachmentMessage || !attachmentMessage.attachments) {
+    throw new Error('Attachment not found in history');
+  }
+  const attachment = attachmentMessage.attachments.find((att: any) => att.artifactId === artifactId);
+  if (!attachment || !attachment.artifact) {
+    throw new Error('Artifact body not found');
   }
 
-  // If we exit the loop without returning, it means we never got a reply
-  throw new Error('Poly did not reply within 30 minutes.');
+  console.log(`[Render ${jobId}] Artifact found, type: ${attachment.mimeType}, size: ${attachment.artifact.length}`);
+
+  // Upload to Supabase Storage
+  const imageBuffer = Buffer.from(attachment.artifact, 'base64');
+  const mimeType = attachment.mimeType || 'image/png';
+  const extension = attachment.extension || (mimeType === 'image/png' ? 'png' : 'jpg');
+  const fileName = `${palId}/${Date.now()}.${extension}`;
+
+  const { error: uploadError } = await supabase.storage
+    .from('avatars')
+    .upload(fileName, imageBuffer, { contentType: mimeType, upsert: true });
+
+  if (uploadError) throw new Error(`Upload failed: ${uploadError.message}`);
+
+  const { data: publicUrl } = supabase.storage.from('avatars').getPublicUrl(fileName);
+  const avatarUrl = publicUrl.publicUrl;
+
+  await supabase.from('pals').update({ avatar_url: avatarUrl }).eq('id', palId);
+  await supabase.from('jobs').update({
+    status: 'completed',
+    result: { avatarUrl, palId },
+    pal_id: palId,
+    completed_at: new Date().toISOString(),
+  }).eq('id', jobId);
+
+  console.log(`[Render ${jobId}] Completed! Avatar: ${avatarUrl}`);
 }
 
 export default router;
