@@ -10,6 +10,7 @@ import testImageAsyncRoutes from './routes/testImageAsync.js';
 import renderRoutes from './routes/render.js';
 import testRenderImageRoutes from './routes/testRenderImage.js';
 import renderDirectRoutes from './routes/renderDirect.js';
+import fetchArtifactRoutes from './routes/fetchArtifact.js';
 
 const app = express();
 app.use(cors());
@@ -27,6 +28,7 @@ app.use('/api/admin', testImageAsyncRoutes);
 app.use('/api/admin', renderRoutes);
 app.use('/api', testRenderImageRoutes);
 app.use('/api', renderDirectRoutes);
+app.use('/api/admin', fetchArtifactRoutes);
 
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
