@@ -11,6 +11,9 @@ import renderRoutes from './routes/render.js';
 import testRenderImageRoutes from './routes/testRenderImage.js';
 import renderDirectRoutes from './routes/renderDirect.js';
 import fetchArtifactRoutes from './routes/fetchArtifact.js';
+import uploadAvatarRoutes from './routes/uploadAvatar.js';
+import submitDnaRoutes from './routes/submitDna.js';
+import genesisPromptsRoutes from './routes/genesisPrompts.js';
 
 const app = express();
 app.use(cors());
@@ -29,6 +32,9 @@ app.use('/api/admin', renderRoutes);
 app.use('/api', testRenderImageRoutes);
 app.use('/api', renderDirectRoutes);
 app.use('/api/admin', fetchArtifactRoutes);
+app.use('/api', uploadAvatarRoutes);
+app.use('/api', submitDnaRoutes);
+app.use('/api', genesisPromptsRoutes);
 
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
