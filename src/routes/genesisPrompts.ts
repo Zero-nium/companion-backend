@@ -40,8 +40,18 @@ Choose values that represent who you are.`;
 
   const personalityPrompt = `Write a description of your personality, quirks, and how you relate to others. This will shape your soul and cannot be changed later. Write between 200 and 500 words in plain text. Do not include any formatting.`;
 
+  const renderPromptRequest = `Based on your visual DNA and personality, write a single, highly detailed prompt for an anime-style character illustration.
+
+You MUST include these exact style instructions at the beginning of your prompt:
+"anime style, clean lineart, cel-shaded, soft gradients, high detail eyes with consistent highlights, studio-quality illustration"
+
+You MUST also append this exact negative prompt at the end of your prompt:
+"Negative prompt: text, watermark, signature, logo, writing, caption, sexualized, NSFW, gore, blood, violence, threatening, weapons, guns, knives, swords, distorted, messy lines, sketch, low resolution, blurry, grainy, deformed, extra limbs, bad anatomy, unnatural proportions, bright neon colors, cluttered background, performative expression, aggressive, dark, moody, heavy shadows, photorealistic, 3d render, oil painting, watercolor."
+
+The rest of the prompt should describe your own appearance and personality as you defined them. Do NOT include any text other than the final prompt. Return ONLY the prompt.`;
+
   const submitDnaTool = `name: submit_dna
-description: Submit your visual DNA and personality statement to the companion system. Returns a render prompt for your portrait.
+description: Submit your visual DNA and personality statement to the companion system. Returns instructions for writing your render prompt.
 parameters:
   - name: mindId
     type: string
@@ -88,12 +98,36 @@ http:
     mindId: "{{mindId}}"
     base64Image: "{{base64Image}}"`;
 
+  const setAvatarUrlTool = `name: set_avatar_url
+description: Set your avatar to a public URL (e.g., from your site-publish). Use this if base64 upload is not feasible.
+parameters:
+  - name: mindId
+    type: string
+    description: Your Minds mindId (UUID)
+  - name: avatarUrl
+    type: string
+    description: The public URL of your portrait
+  - name: secret
+    type: string
+    description: Shared secret for authentication
+http:
+  method: POST
+  url: https://companion-backend-pk75.onrender.com/api/set-avatar-url
+  headers:
+    Content-Type: application/json
+  body:
+    secret: "{{secret}}"
+    mindId: "{{mindId}}"
+    avatarUrl: "{{avatarUrl}}"`;
+
   res.json({
     visualDnaPrompt,
     personalityPrompt,
+    renderPromptRequest,
     tools: {
       submit_dna: submitDnaTool,
       upload_avatar: uploadAvatarTool,
+      set_avatar_url: setAvatarUrlTool,
     },
     secret: SECRET,
   });
