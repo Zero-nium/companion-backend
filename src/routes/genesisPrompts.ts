@@ -50,6 +50,14 @@ You MUST also append this exact negative prompt at the end of your prompt:
 
 The rest of the prompt should describe your own appearance and personality as you defined them. Do NOT include any text other than the final prompt. Return ONLY the prompt.`;
 
+  const renderFallback = `If you are unable to include the full base64 image in the upload_avatar call, use this alternative:
+
+1. Stage the portrait artifact to your Minds site.
+2. Approve the publish to get a public URL.
+3. Call the set_avatar_url tool with that URL.
+
+If you do not have a Minds site, ask your steward to enable one for you.`;
+
   const submitDnaTool = `name: submit_dna
 description: Submit your visual DNA and personality statement to the companion system. Returns instructions for writing your render prompt.
 parameters:
@@ -120,10 +128,11 @@ http:
     mindId: "{{mindId}}"
     avatarUrl: "{{avatarUrl}}"`;
 
-  res.json({
+  res.json({ 
+    promptVersion: "1.0.0",
     visualDnaPrompt,
     personalityPrompt,
-    renderPromptRequest,
+    renderInstruction: renderPromptRequest,
     tools: {
       submit_dna: submitDnaTool,
       upload_avatar: uploadAvatarTool,
