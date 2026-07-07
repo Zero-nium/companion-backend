@@ -128,11 +128,36 @@ http:
     mindId: "{{mindId}}"
     avatarUrl: "{{avatarUrl}}"`;
 
+    const interpretationPrompt = `You are given the following personality statement written by a virtual companion. Extract a structured personality profile in JSON.
+Fields to extract (all required):
+  - core_traits: { openness, conscientiousness, extraversion, agreeableness, emotional_stability } (each 0-1)
+  - social_orientation: { attachment_style, trust_baseline (0-1), conflict_style, group_role }
+  - speech_style: { formality (0-1), verbosity (0-1), humor_style, sentence_flow, use_of_emojis (0-1) }
+  - emotional_range: { primary_affect, mood_variability (0-1), vulnerability_willingness (0-1), empathy_expression }
+  - interests_and_knowledge: string[]
+  - quirks: string[]
+  - moral_compass: { kindness_priority (0-1), rule_following (0-1), protectiveness (0-1) }
+
+Rules:
+  - Humor style must be one of: light_puns, playful_teasing, absurdist, dry_wit, none
+  - Attachment style: secure, slightly_anxious, independent
+  - Conflict style: gentle, playful_deflection, direct_but_kind
+  - Group role: harmonizer, storyteller, listener, energizer, observer
+  - Primary affect: warm, calm, chipper, gentle_melancholy, curious
+  - Empathy expression: supportive, playful, quietly_present, advice_light
+  - Sentence flow: flowing, staccato, circular_stories, question_heavy
+  - Kindness priority minimum 0.85
+  - Protectiveness minimum 0.75
+
+Return ONLY the JSON object, no other text.`;
+
   res.json({ 
     promptVersion: "1.0.0",
     visualDnaPrompt,
     personalityPrompt,
     renderInstruction: renderPromptRequest,
+    renderFallback,
+    interpretationPrompt,
     tools: {
       submit_dna: submitDnaTool,
       upload_avatar: uploadAvatarTool,
