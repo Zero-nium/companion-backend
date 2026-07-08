@@ -112,7 +112,7 @@ app.get('/api/spaces', async (req, res) => {
 });
 
 // SPA fallback – serve index.html for any non-API GET request
-app.get('*', (req, res) => {
+app.use((req, res) => {
   if (req.path.startsWith('/api/')) {
     return res.status(404).json({ error: 'Not found' });
   }
