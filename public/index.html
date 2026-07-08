@@ -120,7 +120,15 @@
 
         const data = await res.json();
         // Replace <br> with actual line breaks
-        const reply = data.reply.replace(/<br\s*\/?>/gi, '\n');
+        const reply = data.reply
+          .replace(/<br\s*\/?>/gi, '\n')
+          .replace(/<\/p>/gi, '\n')
+          .replace(/<[^>]*>/g, '')
+          .replace(/&amp;/g, '&')
+          .replace(/&lt;/g, '<')
+          .replace(/&gt;/g, '>')
+          .replace(/&quot;/g, '"')
+          .replace(/&#39;/g, "'");
         addMessage(reply, 'pal');
       } catch (e) {
         addMessage(`Error: ${e.message}`, 'pal');
