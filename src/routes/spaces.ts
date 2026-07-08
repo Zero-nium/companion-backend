@@ -6,6 +6,11 @@ const router = Router();
 const SECRET = process.env.UPLOAD_SECRET || 'dev-upload-secret';
 
 // POST /api/admin/spaces — activate a World Seed into a Space
+// Temporary test route
+router.get('/spaces-test', (req, res) => {
+  res.json({ message: 'spaces route is working' });
+});
+// POST /api/admin/spaces — activate a World Seed into a Space
 router.post('/spaces', async (req, res) => {
   try {
     const { secret, world_id, participants } = req.body;
