@@ -9,6 +9,7 @@ import uploadAvatarRoutes from './routes/uploadAvatar.js';
 import setAvatarUrlRoutes from './routes/setAvatarUrl.js';
 import inboundRoutes from './routes/inbound.js'; // harmless placeholder
 import submitPersonalityRoutes from './routes/submitPersonality.js';
+import chatRoutes from './routes/chat.js';
 
 const app = express();
 app.use(cors());
@@ -25,6 +26,7 @@ app.use('/api', uploadAvatarRoutes);
 app.use('/api', setAvatarUrlRoutes);
 app.use('/api', inboundRoutes); // keep for future email webhook
 app.use('/api', submitPersonalityRoutes);
+app.use('/api', chatRoutes);
 
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
