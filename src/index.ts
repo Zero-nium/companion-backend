@@ -31,6 +31,7 @@ app.use('/api', inboundRoutes); // keep for future email webhook
 app.use('/api', submitPersonalityRoutes);
 app.use('/api', chatRoutes);
 app.use('/api/admin', worldsRoutes); 
+app.use('/api', worldsRoutes);
 
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
