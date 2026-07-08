@@ -26,7 +26,7 @@ router.post('/chat', async (req, res) => {
     const anchor = buildAnchor(pal.personality_dna);
 
     // 3. Stable conversation alias (one thread per pal)
-    const alias = `conv-${palId}`;
+    const alias = `chat-${palId}-${Date.now()}`;
 
     // 4. Fetch recent conversation history (last 10 messages)
     const historyText = await getRecentHistory(alias);
