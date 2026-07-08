@@ -18,6 +18,8 @@ app.use(express.json());
 // Health check
 app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 
+app.use(express.static('public'));
+
 // Mount routes
 app.use('/api', testMindRoutes);
 app.use('/api', genesisPromptsRoutes);
