@@ -252,7 +252,8 @@ async function runSpaceTriggerJob(jobId: string) {
   const prompt = `${world.initial_prompt}\n\nRecent conversation:\n${historyText}\n\nIt's your turn to speak. Respond naturally to the conversation around you.`;
   console.log(`[SpaceTrigger ${jobId}] Sending prompt to ${mindId}...`);
 
-  const reply = await sendAndWaitReply(conversation_alias, mindId, prompt, 300_000);
+  const freshAlias = `trigger-${space_id}-${Date.now()}`;
+  const reply = await sendAndWaitReply(freshAlias, mindId, prompt, 300_000);
   console.log(`[SpaceTrigger ${jobId}] Reply received.`);
 
   await supabase.from('space_messages').insert({ space_id, sender_pal_id: nextPalId, content: reply });
