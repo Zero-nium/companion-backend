@@ -134,13 +134,13 @@ app.post('/api/admin/spaces/:id/collect', async (req, res) => {
     let inserted = 0;
     for (const msg of history) {
       if (msg.role === 'user') continue; // skip system/user messages
-      const exists = await supabase
+      const { data: existingRow } = await supabase
         .from('space_messages')
         .select('id')
         .eq('space_id', id)
         .eq('content', msg.messageText)
         .maybeSingle();
-      if (!exists) {
+      if (!existingRow) {
         await supabase.from('space_messages').insert({
           space_id: id,
           sender_pal_id: null, // we could map sender email to pal ID later
