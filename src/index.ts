@@ -3,7 +3,7 @@ import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { supabase } from './db.js';
-import { ensureConversation, sendMessage } from './services/minds.js';
+import { ensureConversation, sendMessage, getHistory } from './services/minds.js';
 
 // Core routes
 import testMindRoutes from './routes/testMind.js';
@@ -106,6 +106,47 @@ app.get('/api/spaces', async (req, res) => {
 
     if (error) throw new Error(error.message);
     res.json({ spaces });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// --- Collect Space messages ---
+app.post('/api/admin/spaces/:id/collect', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { secret } = req.body;
+    if (secret !== ADMIN_SECRET) return res.status(403).json({ error: 'Unauthorized' });
+
+    const { data: space } = await supabase.from('spaces').select('*').eq('id', id).single();
+    if (!space) return res.status(404).json({ error: 'Space not found' });
+
+    const alias = space.conversation_alias;
+    const history = await getHistory(alias, undefined, 10);
+    if (!history || history.length === 0) return res.json({ collected: 0, message: 'No messages found' });
+
+    // Insert any new messages (avoid duplicates by checking messageId)
+    let inserted = 0;
+    for (const msg of history) {
+      if (msg.role === 'user' || msg.role === 'system') continue; // skip system/user messages
+      const exists = await supabase
+        .from('space_messages')
+        .select('id')
+        .eq('space_id', id)
+        .eq('content', msg.messageText)
+        .maybeSingle();
+      if (!exists) {
+        await supabase.from('space_messages').insert({
+          space_id: id,
+          sender_pal_id: null, // we could map sender email to pal ID later
+          content: msg.messageText,
+          timestamp: msg.createdAt || new Date().toISOString(),
+        });
+        inserted++;
+      }
+    }
+
+    res.json({ collected: inserted, message: `Collected ${inserted} new messages` });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
