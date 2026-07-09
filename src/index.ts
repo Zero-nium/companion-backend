@@ -133,7 +133,7 @@ app.post('/api/admin/spaces/:id/collect', async (req, res) => {
     // Insert any new messages (avoid duplicates by checking messageId)
     let inserted = 0;
     for (const msg of history) {
-      if (msg.role === 'user' || msg.role === 'system') continue; // skip system/user messages
+      if (msg.role === 'user') continue; // skip system/user messages
       const exists = await supabase
         .from('space_messages')
         .select('id')
