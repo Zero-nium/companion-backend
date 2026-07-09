@@ -124,7 +124,12 @@ app.post('/api/admin/spaces/:id/collect', async (req, res) => {
     const alias = space.conversation_alias;
     const history = await getHistory(alias, undefined, 10);
     if (!history || history.length === 0) return res.json({ collected: 0, message: 'No messages found' });
-
+    
+    console.log(`[collect] Alias: ${alias}, messages: ${history.length}`);
+    history.forEach((m: any, i: number) => {
+      console.log(`[collect]   [${i}] role=${m.role}, text=${m.messageText?.substring(0, 50)}`);
+    });
+    
     // Insert any new messages (avoid duplicates by checking messageId)
     let inserted = 0;
     for (const msg of history) {
