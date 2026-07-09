@@ -35,14 +35,15 @@ app.use('/api', chatRoutes);
 app.use('/api/admin', worldsRoutes);
 app.use('/api', worldsRoutes);
 
-// Serve the React frontend (built into public/)
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 app.use(express.static(path.join(__dirname, '../public')));
 
 const ADMIN_SECRET = process.env.UPLOAD_SECRET || 'dev-upload-secret';
 
-// --- Space activation endpoint ---
+// =================== SPACE ENDPOINTS ===================
+
+// --- Space activation ---
 app.post('/api/admin/spaces', async (req, res) => {
   try {
     const { secret, world_id, participants } = req.body;
@@ -66,12 +67,7 @@ app.post('/api/admin/spaces', async (req, res) => {
     const alias = `space-${world_id}-${Date.now()}`;
     const { data: space, error } = await supabase
       .from('spaces')
-      .insert({
-        world_id,
-        participants,
-        conversation_alias: alias,
-        status: 'active',
-      })
+      .insert({ world_id, participants, conversation_alias: alias, status: 'active' })
       .select('*')
       .single();
 
@@ -124,16 +120,15 @@ app.post('/api/admin/spaces/:id/collect', async (req, res) => {
     const alias = space.conversation_alias;
     const history = await getHistory(alias, undefined, 10);
     if (!history || history.length === 0) return res.json({ collected: 0, message: 'No messages found' });
-    
+
     console.log(`[collect] Alias: ${alias}, messages: ${history.length}`);
     history.forEach((m: any, i: number) => {
       console.log(`[collect]   [${i}] role=${m.role}, text=${m.messageText?.substring(0, 50)}`);
     });
-    
-    // Insert any new messages (avoid duplicates by checking messageId)
+
     let inserted = 0;
     for (const msg of history) {
-      if (msg.role === 'user') continue; // skip system/user messages
+      if (msg.role === 'user') continue;
       const { data: existingRow } = await supabase
         .from('space_messages')
         .select('id')
@@ -143,7 +138,7 @@ app.post('/api/admin/spaces/:id/collect', async (req, res) => {
       if (!existingRow) {
         await supabase.from('space_messages').insert({
           space_id: id,
-          sender_pal_id: null, // we could map sender email to pal ID later
+          sender_pal_id: null,
           content: msg.messageText,
           timestamp: msg.createdAt || new Date().toISOString(),
         });
@@ -157,7 +152,7 @@ app.post('/api/admin/spaces/:id/collect', async (req, res) => {
   }
 });
 
-// --- Inject a world event into a Space ---
+// --- Inject a world event ---
 app.post('/api/admin/spaces/:id/event', async (req, res) => {
   try {
     const { id } = req.params;
@@ -171,11 +166,7 @@ app.post('/api/admin/spaces/:id/event', async (req, res) => {
 
     const { data: msg, error } = await supabase
       .from('space_messages')
-      .insert({
-        space_id: id,
-        sender_pal_id: null,
-        content: `[World Event] ${event}`,
-      })
+      .insert({ space_id: id, sender_pal_id: null, content: `[World Event] ${event}` })
       .select('*')
       .single();
 
@@ -187,7 +178,7 @@ app.post('/api/admin/spaces/:id/event', async (req, res) => {
   }
 });
 
-// --- Trigger next turn in a Space ---
+// --- Trigger next turn (async) ---
 app.post('/api/admin/spaces/:id/trigger', async (req, res) => {
   try {
     const { id } = req.params;
@@ -197,7 +188,6 @@ app.post('/api/admin/spaces/:id/trigger', async (req, res) => {
     const { data: space } = await supabase.from('spaces').select('*').eq('id', id).single();
     if (!space) return res.status(404).json({ error: 'Space not found' });
 
-    // Create a background job
     const { data: job } = await supabase
       .from('jobs')
       .insert({ type: 'space_trigger', status: 'pending', result: { space_id: id, world_id: space.world_id, participants: space.participants, conversation_alias: space.conversation_alias } })
@@ -205,7 +195,6 @@ app.post('/api/admin/spaces/:id/trigger', async (req, res) => {
       .single();
     if (!job) throw new Error('Failed to create job');
 
-    // Run in background (don't await)
     runSpaceTriggerJob(job.id).catch((err) => {
       console.error(`[SpaceTrigger ${job.id}] failed:`, err);
       supabase.from('jobs').update({ status: 'failed', error: err.message, completed_at: new Date().toISOString() }).eq('id', job.id);
@@ -217,47 +206,58 @@ app.post('/api/admin/spaces/:id/trigger', async (req, res) => {
   }
 });
 
+// --- Background trigger job ---
 async function runSpaceTriggerJob(jobId: string) {
+  console.log(`[SpaceTrigger ${jobId}] Starting.`);
   await supabase.from('jobs').update({ status: 'running' }).eq('id', jobId);
 
   const { data: job } = await supabase.from('jobs').select('*').eq('id', jobId).single();
   if (!job) throw new Error('Job not found');
 
   const { space_id, world_id, participants, conversation_alias } = job.result;
-  const alias = conversation_alias;
+  console.log(`[SpaceTrigger ${jobId}] Space: ${space_id}, Participants: ${participants?.length}`);
 
-  // 1. Load world
   const { data: world } = await supabase.from('worlds').select('initial_prompt').eq('id', world_id).single();
   if (!world) throw new Error('World not found');
 
-  // 2. Determine next speaker
-  const { data: lastMsg } = await supabase.from('space_messages').select('sender_pal_id').eq('space_id', space_id).order('timestamp', { ascending: false }).limit(1).maybeSingle();
+  const { data: lastMsg } = await supabase
+    .from('space_messages')
+    .select('sender_pal_id')
+    .eq('space_id', space_id)
+    .order('timestamp', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
   let nextIndex = 0;
   if (lastMsg && lastMsg.sender_pal_id) {
     const lastIdx = participants.indexOf(lastMsg.sender_pal_id);
     nextIndex = (lastIdx + 1) % participants.length;
   }
   const nextPalId = participants[nextIndex];
+  console.log(`[SpaceTrigger ${jobId}] Next speaker: ${nextPalId}`);
 
-  // 3. Load pal email
   const { data: pal } = await supabase.from('pals').select('mind_email').eq('id', nextPalId).single();
   if (!pal) throw new Error('Pal not found');
   const mindId = pal.mind_email.split('@')[0];
+  console.log(`[SpaceTrigger ${jobId}] Pal: ${pal.mind_email}, mindId: ${mindId}`);
 
-  // 4. Fetch recent messages
-  const { data: recentMessages } = await supabase.from('space_messages').select('content').eq('space_id', space_id).order('timestamp', { ascending: true }).limit(10);
+  const { data: recentMessages } = await supabase
+    .from('space_messages')
+    .select('content')
+    .eq('space_id', space_id)
+    .order('timestamp', { ascending: true })
+    .limit(10);
   const historyText = recentMessages?.map(m => m.content).join('\n') || '';
 
-  // 5. Build prompt
   const prompt = `${world.initial_prompt}\n\nRecent conversation:\n${historyText}\n\nIt's your turn to speak. Respond naturally to the conversation around you.`;
+  console.log(`[SpaceTrigger ${jobId}] Sending prompt to ${mindId}...`);
 
-  // 6. Send to companion (up to 5 minutes)
-  const reply = await sendAndWaitReply(alias, mindId, prompt, 300_000);
+  const reply = await sendAndWaitReply(conversation_alias, mindId, prompt, 300_000);
+  console.log(`[SpaceTrigger ${jobId}] Reply received.`);
 
-  // 7. Store reply
   await supabase.from('space_messages').insert({ space_id, sender_pal_id: nextPalId, content: reply });
+  console.log(`[SpaceTrigger ${jobId}] Stored reply. Job complete.`);
 
-  // 8. Mark job completed
   await supabase.from('jobs').update({ status: 'completed', result: { ...job.result, sender: nextPalId, reply }, completed_at: new Date().toISOString() }).eq('id', jobId);
 }
 
@@ -273,7 +273,7 @@ app.get('/api/admin/jobs/:id', async (req, res) => {
   }
 });
 
-// SPA fallback – serve index.html for any non-API GET request
+// SPA fallback – serve index.html for any non-API request
 app.use((req, res) => {
   if (req.path.startsWith('/api/')) {
     return res.status(404).json({ error: 'Not found' });
