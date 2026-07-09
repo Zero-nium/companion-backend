@@ -261,6 +261,18 @@ async function runSpaceTriggerJob(jobId: string) {
   await supabase.from('jobs').update({ status: 'completed', result: { ...job.result, sender: nextPalId, reply }, completed_at: new Date().toISOString() }).eq('id', jobId);
 }
 
+// --- Generic job status ---
+app.get('/api/admin/jobs/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { data: job } = await supabase.from('jobs').select('*').eq('id', id).single();
+    if (!job) return res.status(404).json({ error: 'Job not found' });
+    res.json({ jobId: job.id, status: job.status, result: job.result, error: job.error });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // SPA fallback – serve index.html for any non-API GET request
 app.use((req, res) => {
   if (req.path.startsWith('/api/')) {
