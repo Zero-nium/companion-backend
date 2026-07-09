@@ -157,6 +157,36 @@ app.post('/api/admin/spaces/:id/collect', async (req, res) => {
   }
 });
 
+// --- Inject a world event into a Space ---
+app.post('/api/admin/spaces/:id/event', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { secret, event } = req.body;
+    if (secret !== ADMIN_SECRET) return res.status(403).json({ error: 'Unauthorized' });
+
+    if (!event) return res.status(400).json({ error: 'event description is required' });
+
+    const { data: space } = await supabase.from('spaces').select('id').eq('id', id).single();
+    if (!space) return res.status(404).json({ error: 'Space not found' });
+
+    const { data: msg, error } = await supabase
+      .from('space_messages')
+      .insert({
+        space_id: id,
+        sender_pal_id: null,
+        content: `[World Event] ${event}`,
+      })
+      .select('*')
+      .single();
+
+    if (error) throw new Error(error.message);
+
+    res.json({ success: true, event: msg });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // SPA fallback – serve index.html for any non-API GET request
 app.use((req, res) => {
   if (req.path.startsWith('/api/')) {
