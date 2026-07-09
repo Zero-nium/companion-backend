@@ -3,7 +3,7 @@ import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { supabase } from './db.js';
-import { ensureConversation, sendMessage, getHistory, sendAndWaitReply } from './services/minds.js';
+import { ensureConversation, sendMessage, getHistory, sendAndWaitReply, resolveMindId } from './services/minds.js';
 
 // Core routes
 import testMindRoutes from './routes/testMind.js';
@@ -238,7 +238,8 @@ async function runSpaceTriggerJob(jobId: string) {
 
   const { data: pal } = await supabase.from('pals').select('mind_email').eq('id', nextPalId).single();
   if (!pal) throw new Error('Pal not found');
-  const mindId = pal.mind_email.split('@')[0];
+  const mindId = await resolveMindId(pal.mind_email);
+  if (!mindId) throw new Error(`Could not resolve mindId for ${pal.mind_email}`);
   console.log(`[SpaceTrigger ${jobId}] Pal: ${pal.mind_email}, mindId: ${mindId}`);
 
   const { data: recentMessages } = await supabase
