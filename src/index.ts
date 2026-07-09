@@ -3,7 +3,7 @@ import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { supabase } from './db.js';
-import { ensureConversation, sendMessage, getHistory } from './services/minds.js';
+import { ensureConversation, sendMessage, getHistory, sendAndWaitReply } from './services/minds.js';
 
 // Core routes
 import testMindRoutes from './routes/testMind.js';
@@ -182,6 +182,78 @@ app.post('/api/admin/spaces/:id/event', async (req, res) => {
     if (error) throw new Error(error.message);
 
     res.json({ success: true, event: msg });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// --- Trigger next turn in a Space ---
+app.post('/api/admin/spaces/:id/trigger', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { secret } = req.body;
+    if (secret !== ADMIN_SECRET) return res.status(403).json({ error: 'Unauthorized' });
+
+    // 1. Load space and world
+    const { data: space } = await supabase.from('spaces').select('*').eq('id', id).single();
+    if (!space) return res.status(404).json({ error: 'Space not found' });
+
+    const { data: world } = await supabase.from('worlds').select('initial_prompt').eq('id', space.world_id).single();
+    if (!world) return res.status(404).json({ error: 'World not found' });
+
+    const participants = space.participants;
+    if (!participants || participants.length === 0) {
+      return res.status(400).json({ error: 'No participants in this space' });
+    }
+
+    // 2. Determine next speaker (simple round‑robin)
+    const { data: lastMsg } = await supabase
+      .from('space_messages')
+      .select('sender_pal_id')
+      .eq('space_id', id)
+      .order('timestamp', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    let nextIndex = 0;
+    if (lastMsg && lastMsg.sender_pal_id) {
+      const lastSpeakerId = lastMsg.sender_pal_id;
+      const lastIdx = participants.indexOf(lastSpeakerId);
+      nextIndex = (lastIdx + 1) % participants.length;
+    }
+    const nextPalId = participants[nextIndex];
+
+    // 3. Load the next pal's email
+    const { data: pal } = await supabase.from('pals').select('mind_email').eq('id', nextPalId).single();
+    if (!pal) return res.status(404).json({ error: 'Pal not found' });
+
+    const mindId = pal.mind_email.split('@')[0];
+
+    // 4. Fetch recent space messages for context
+    const { data: recentMessages } = await supabase
+      .from('space_messages')
+      .select('content')
+      .eq('space_id', id)
+      .order('timestamp', { ascending: true })
+      .limit(10);
+
+    const historyText = recentMessages?.map(m => m.content).join('\n') || '';
+
+    // 5. Build the prompt
+    const prompt = `${world.initial_prompt}\n\nRecent conversation:\n${historyText}\n\nIt's your turn to speak. Respond naturally to the conversation around you.`;
+
+    // 6. Send to the companion
+    const alias = space.conversation_alias;
+    const reply = await sendAndWaitReply(alias, mindId, prompt, 180_000);
+
+    // 7. Store the reply
+    await supabase.from('space_messages').insert({
+      space_id: id,
+      sender_pal_id: nextPalId,
+      content: reply,
+    });
+
+    res.json({ success: true, sender: nextPalId, reply });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
