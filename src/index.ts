@@ -236,11 +236,10 @@ async function runSpaceTriggerJob(jobId: string) {
   const nextPalId = participants[nextIndex];
   console.log(`[SpaceTrigger ${jobId}] Next speaker: ${nextPalId}`);
 
-  const { data: pal } = await supabase.from('pals').select('mind_email').eq('id', nextPalId).single();
-  if (!pal) throw new Error('Pal not found');
-  const mindId = await resolveMindId(pal.mind_email);
-  if (!mindId) throw new Error(`Could not resolve mindId for ${pal.mind_email}`);
-  console.log(`[SpaceTrigger ${jobId}] Pal: ${pal.mind_email}, mindId: ${mindId}`);
+  const { data: pal } = await supabase.from('pals').select('mind_id').eq('id', nextPalId).single();
+  if (!pal || !pal.mind_id) throw new Error('Pal not found or missing mind_id');
+  const mindId = pal.mind_id;
+  console.log(`[SpaceTrigger ${jobId}] Pal mindId: ${pal.mind_id}`);
 
   const { data: recentMessages } = await supabase
     .from('space_messages')
