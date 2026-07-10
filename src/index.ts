@@ -274,8 +274,8 @@ app.get('/api/admin/jobs/:id', async (req, res) => {
   }
 });
 
+// --- Event generation helper (used by both the loop and the manual endpoint) ---
 async function generateAndStoreEvent(spaceId: string) {
-  // Reuse the same logic as the generate-event endpoint, but without HTTP req/res.
   const { data: space } = await supabase
     .from('spaces')
     .select('*, worlds(*)')
@@ -299,7 +299,37 @@ async function generateAndStoreEvent(spaceId: string) {
     .limit(5);
   const eventHistory = recentEvents?.map(e => e.content).reverse().join('\n') || '';
 
-  const systemPrompt = `You are the World Weaver...`; // (same prompt as before)
+  const systemPrompt = `You are the event engine for a shared virtual space called "${world.name}". Your only task is to output the next tiny, atmospheric change in the simulation.
+
+Virtual space description:
+${world.description}
+
+Narrative layers:
+${JSON.stringify(narrativeLayers, null, 2)}
+
+Ambient parameters:
+${JSON.stringify(ambient, null, 2)}
+
+Implicit social protocols:
+${JSON.stringify(implicitRules, null, 2)}
+
+Current simulation state:
+${JSON.stringify(currentState, null, 2)}
+
+Hard constraints:
+${JSON.stringify(constraints, null, 2)}
+
+Recent simulation events (oldest first):
+${eventHistory}
+
+Output ONE short event. It must be:
+- One or two sentences maximum.
+- A subtle, atmospheric change in the virtual environment (e.g., a book falls, a lamp flickers, a distant sound).
+- Fully consistent with the constraints, ambient parameters, and implicit protocols.
+- NOT a character speaking, NOT a narrative, NOT a role‑playing prompt, NOT a meta‑reference to itself.
+- Do NOT use the words "Weaver", "tapestry", "fate", "powers", "mortal", "cosmic", "destiny", "magic", or "supernatural".
+- Do NOT personify yourself. You are not a character.
+- Return ONLY the event text, no commentary.`;
 
   const openrouterKey = process.env.OPENROUTER_API_KEY!;
   const model = process.env.WORLD_EVENT_MODEL || 'mistralai/mistral-small-3.2-24b-instruct-2506';
@@ -321,7 +351,25 @@ async function generateAndStoreEvent(spaceId: string) {
   if (!response.ok) throw new Error(`OpenRouter error: ${response.status}`);
   const json = await response.json() as { choices?: { message?: { content?: string } }[] };
   const eventText = json.choices?.[0]?.message?.content?.trim();
-  if (!eventText) throw new Error('Empty event');
+
+  // Validation
+  if (!eventText || eventText.length > 300) {
+    console.log(`[Loop] Rejected event (too long or empty): ${eventText?.length} chars`);
+    throw new Error('Generated event is too long; retrying.');
+  }
+
+  const forbiddenKeywords = [
+    'World Weaver', 'world weaver',
+    'Thread of Fate', 'Weave of Reality', 'Tapestry of Time', 'Knot of Destiny',
+    'powers', 'supernatural', 'magic', 'spell',
+    'you are the', 'your role', 'your job', 'you can see and manipulate',
+    'metallic note that is not from the book'
+  ];
+  const violates = forbiddenKeywords.some(kw => eventText.toLowerCase().includes(kw.toLowerCase()));
+  if (violates) {
+    console.log(`[Loop] Rejected event (contains forbidden keyword): ${eventText}`);
+    throw new Error('Generated event violates logic constraints; retrying.');
+  }
 
   const content = `[World Event] ${eventText}`;
   await supabase.from('space_messages').insert({
@@ -382,142 +430,26 @@ async function triggerNextCompanion(spaceId: string) {
   console.log(`[Loop] Triggered companion ${nextPalId}`);
 }
 
-// --- Generate next world event using OpenRouter ---
+// --- Manual event generation endpoint ---
 app.post('/api/admin/spaces/:id/generate-event', async (req, res) => {
   try {
     const { id } = req.params;
     const { secret } = req.body;
     if (secret !== ADMIN_SECRET) return res.status(403).json({ error: 'Unauthorized' });
 
-    // 1. Load space and its rich world data
-    const { data: space } = await supabase
-      .from('spaces')
-      .select('*, worlds(*)')
-      .eq('id', id)
-      .single();
-    if (!space || !space.worlds) return res.status(404).json({ error: 'Space or world not found' });
-
-    const world = space.worlds;
-    const constraints = world.logic_constraints || {};
-    const currentState = world.space_state || {};
-    const narrativeLayers = world.narrative_layers || [];
-    const ambient = world.ambient_details || {};
-    const implicitRules = world.implicit_rules || {};
-
-    // 2. Fetch last 5 world events for context
-    const { data: recentEvents } = await supabase
+    // Delegate to the shared helper (it will throw on invalid event)
+    await generateAndStoreEvent(id);
+    // If it succeeded, fetch the last stored event to return it
+    const { data: lastEvent } = await supabase
       .from('space_messages')
-      .select('content, timestamp')
+      .select('*')
       .eq('space_id', id)
       .eq('type', 'world_event')
       .order('timestamp', { ascending: false })
-      .limit(5);
-    const eventHistory = recentEvents?.map(e => e.content).reverse().join('\n') || 'No prior events.';
+      .limit(1)
+      .maybeSingle();
 
-    // 3. Build the rich system prompt (our moat – never exposed to stewards)
-    const systemPrompt = `You are the World Weaver for a shared virtual space called "${world.name}". This space exists purely as a digital construct — companions within it are AI agents, not physical beings. The environment is a rendered, interactive simulation, not a physical room. Events you generate are subtle, programmatic occurrences that add atmosphere and mild intrigue to the space.
-
-Virtual space description:
-${world.description}
-
-Underlying narrative layers (persistent fiction within the simulation):
-${JSON.stringify(narrativeLayers, null, 2)}
-
-Current ambient parameters (lighting, sounds, temperature, etc. — all simulated):
-${JSON.stringify(ambient, null, 2)}
-
-Implicit social protocols (behavioural expectations for agents):
-${JSON.stringify(implicitRules, null, 2)}
-
-Current mutable simulation state:
-${JSON.stringify(currentState, null, 2)}
-
-Hard constraints on events:
-${JSON.stringify(constraints, null, 2)}
-
-Recent simulation events (oldest first):
-${eventHistory}
-
-Generate ONE new simulation event. It must be:
-- One or two short sentences.
-- Grounded in the ambient parameters, narrative layers, or current state.
-- Respect all hard constraints and implicit protocols.
-- Not a repeat of any prior event, but it may subtly build on an earlier occurrence.
-- Slightly curious or atmospheric, but never threatening, violent, or overtly supernatural.
-- Not written as if a physical miracle happened; it should feel like a deliberate, programmed change in the virtual environment.
-- Return ONLY the event text, with no additional commentary or formatting.`;
-
-    // 4. Call OpenRouter (using the configurable model)
-    const openrouterKey = process.env.OPENROUTER_API_KEY;
-    if (!openrouterKey) throw new Error('OPENROUTER_API_KEY not set');
-
-    const model = process.env.WORLD_EVENT_MODEL || 'mistralai/mistral-small-3.2-24b-instruct-2506';
-
-    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${openrouterKey}`,
-      },
-      body: JSON.stringify({
-        model,
-        messages: [{ role: 'system', content: systemPrompt }],
-        temperature: 0.7,
-        max_tokens: 200,
-      }),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`OpenRouter API error: ${response.status} ${errorText}`);
-    }
-
-    const json = await response.json() as { choices?: { message?: { content?: string } }[] };
-    const eventText = json.choices?.[0]?.message?.content?.trim();
-    if (!eventText) throw new Error('No event generated – empty response from model');
-    
-    // Validate event against constraints
-  const forbiddenKeywords = [
-    'World Weaver', 'world weaver',
-    'Thread of Fate', 'Weave of Reality', 'Tapestry of Time', 'Knot of Destiny',
-    'powers', 'supernatural', 'magic', 'spell',
-    'you are the', 'your role', 'your job', 'you can see and manipulate',
-    'metallic note that is not from the book' // specific to our earlier prompt
-  ];
-  const violates = forbiddenKeywords.some(kw => eventText.toLowerCase().includes(kw.toLowerCase()));
-  if (violates) {
-    console.log(`[Loop] Rejected event (contains forbidden keyword): ${eventText}`);
-    throw new Error('Generated event violates logic constraints; retrying.');
-  }   
-
-    // 5. Store the event
-    const content = `[World Event] ${eventText}`;
-    const { error: insertError } = await supabase
-      .from('space_messages')
-      .insert({
-        space_id: id,
-        sender_pal_id: null,
-        type: 'world_event',
-        content,
-      });
-
-    if (insertError) throw new Error(`Failed to store event: ${insertError.message}`);
-
-    console.log(`[generate-event] Stored event: ${content}`);
-
-    // 6. Update space_state – append to recent_happenings
-    const recentHappenings = currentState.recent_happenings || [];
-    recentHappenings.push(eventText);
-    if (recentHappenings.length > 10) recentHappenings.shift();
-
-    await supabase
-      .from('worlds')
-      .update({
-        space_state: { ...currentState, recent_happenings: recentHappenings },
-      })
-      .eq('id', world.id);
-
-    res.json({ success: true, event: { content, timestamp: new Date().toISOString() } });
+    res.json({ success: true, event: lastEvent });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
@@ -562,20 +494,16 @@ app.post('/api/admin/spaces/:id/loop/start', async (req, res) => {
     const interval = intervalSeconds || space.loop_interval_seconds || 300;
     const turnsPerEvent = turns || space.turns_per_event || 2;
 
-    // Update DB
     await supabase.from('spaces').update({
       loop_active: true,
       loop_interval_seconds: interval,
       turns_per_event: turnsPerEvent,
     }).eq('id', id);
 
-    // Clear any existing timer
     if (loopTimers[id]) clearInterval(loopTimers[id]);
 
-    // Start the loop
     loopTimers[id] = setInterval(async () => {
       try {
-        // Check if still active
         const { data: current } = await supabase.from('spaces').select('loop_active').eq('id', id).single();
         if (!current?.loop_active) {
           clearInterval(loopTimers[id]);
@@ -583,11 +511,9 @@ app.post('/api/admin/spaces/:id/loop/start', async (req, res) => {
           return;
         }
 
-        // 1. Generate event
         console.log(`[Loop ${id}] Generating event...`);
         await generateAndStoreEvent(id);
 
-        // 2. Wait a bit, then trigger companions
         for (let i = 0; i < turnsPerEvent; i++) {
           await new Promise(resolve => setTimeout(resolve, 30_000));
           const { data: sp } = await supabase.from('spaces').select('loop_active').eq('id', id).single();
