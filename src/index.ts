@@ -609,6 +609,23 @@ app.post('/api/admin/spaces/:id/loop/stop', async (req, res) => {
   }
 });
 
+// --- Companion info (avatar + name) ---
+app.get('/api/pals/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { data: pal } = await supabase
+      .from('pals')
+      .select('id, display_name, avatar_url')
+      .eq('id', id)
+      .single();
+
+    if (!pal) return res.status(404).json({ error: 'Pal not found' });
+    res.json(pal);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // SPA fallback – serve index.html for any non-API request
 app.use((req, res) => {
   if (req.path.startsWith('/api/')) {
