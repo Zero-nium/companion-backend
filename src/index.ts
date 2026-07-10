@@ -369,16 +369,19 @@ Generate ONE new simulation event. It must be:
     if (!eventText) throw new Error('No event generated – empty response from model');
 
     // 5. Store the event
-    const { data: msg } = await supabase
+    const content = `[World Event] ${eventText}`;
+    const { error: insertError } = await supabase
       .from('space_messages')
       .insert({
         space_id: id,
         sender_pal_id: null,
         type: 'world_event',
-        content: `[World Event] ${eventText}`,
-      })
-      .select('*')
-      .single();
+        content,
+      });
+
+    if (insertError) throw new Error(`Failed to store event: ${insertError.message}`);
+
+    console.log(`[generate-event] Stored event: ${content}`);
 
     // 6. Update space_state – append to recent_happenings
     const recentHappenings = currentState.recent_happenings || [];
@@ -392,7 +395,7 @@ Generate ONE new simulation event. It must be:
       })
       .eq('id', world.id);
 
-    res.json({ success: true, event: msg });
+    res.json({ success: true, event: { content, timestamp: new Date().toISOString() } });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
