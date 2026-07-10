@@ -274,6 +274,114 @@ app.get('/api/admin/jobs/:id', async (req, res) => {
   }
 });
 
+async function generateAndStoreEvent(spaceId: string) {
+  // Reuse the same logic as the generate-event endpoint, but without HTTP req/res.
+  const { data: space } = await supabase
+    .from('spaces')
+    .select('*, worlds(*)')
+    .eq('id', spaceId)
+    .single();
+  if (!space || !space.worlds) throw new Error('Space not found');
+
+  const world = space.worlds;
+  const constraints = world.logic_constraints || {};
+  const currentState = world.space_state || {};
+  const narrativeLayers = world.narrative_layers || [];
+  const ambient = world.ambient_details || {};
+  const implicitRules = world.implicit_rules || {};
+
+  const { data: recentEvents } = await supabase
+    .from('space_messages')
+    .select('content')
+    .eq('space_id', spaceId)
+    .eq('type', 'world_event')
+    .order('timestamp', { ascending: false })
+    .limit(5);
+  const eventHistory = recentEvents?.map(e => e.content).reverse().join('\n') || '';
+
+  const systemPrompt = `You are the World Weaver...`; // (same prompt as before)
+
+  const openrouterKey = process.env.OPENROUTER_API_KEY!;
+  const model = process.env.WORLD_EVENT_MODEL || 'mistralai/mistral-small-3.2-24b-instruct-2506';
+
+  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${openrouterKey}`,
+    },
+    body: JSON.stringify({
+      model,
+      messages: [{ role: 'system', content: systemPrompt }],
+      temperature: 0.7,
+      max_tokens: 200,
+    }),
+  });
+
+  if (!response.ok) throw new Error(`OpenRouter error: ${response.status}`);
+  const json = await response.json() as { choices?: { message?: { content?: string } }[] };
+  const eventText = json.choices?.[0]?.message?.content?.trim();
+  if (!eventText) throw new Error('Empty event');
+
+  const content = `[World Event] ${eventText}`;
+  await supabase.from('space_messages').insert({
+    space_id: spaceId,
+    sender_pal_id: null,
+    type: 'world_event',
+    content,
+  });
+
+  const recentHappenings = currentState.recent_happenings || [];
+  recentHappenings.push(eventText);
+  if (recentHappenings.length > 10) recentHappenings.shift();
+  await supabase.from('worlds').update({
+    space_state: { ...currentState, recent_happenings: recentHappenings },
+  }).eq('id', world.id);
+
+  console.log(`[Loop] Generated event: ${content}`);
+}
+
+async function triggerNextCompanion(spaceId: string) {
+  const { data: space } = await supabase.from('spaces').select('*').eq('id', spaceId).single();
+  if (!space) throw new Error('Space not found');
+
+  const participants = space.participants;
+  if (!participants?.length) return;
+
+  const { data: lastMsg } = await supabase
+    .from('space_messages')
+    .select('sender_pal_id')
+    .eq('space_id', spaceId)
+    .order('timestamp', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  let nextIndex = 0;
+  if (lastMsg?.sender_pal_id) {
+    const idx = participants.indexOf(lastMsg.sender_pal_id);
+    nextIndex = (idx + 1) % participants.length;
+  }
+  const nextPalId = participants[nextIndex];
+
+  const { data: pal } = await supabase.from('pals').select('mind_id').eq('id', nextPalId).single();
+  if (!pal?.mind_id) throw new Error('Pal not found');
+
+  const { data: world } = await supabase.from('worlds').select('initial_prompt').eq('id', space.world_id).single();
+  const { data: recentMessages } = await supabase
+    .from('space_messages')
+    .select('content')
+    .eq('space_id', spaceId)
+    .order('timestamp', { ascending: true })
+    .limit(10);
+  const historyText = recentMessages?.map(m => m.content).join('\n') || '';
+  const prompt = `${world?.initial_prompt || ''}\n\nRecent conversation:\n${historyText}\n\nIt's your turn to speak. Respond naturally to the conversation around you.`;
+
+  const alias = `trigger-${spaceId}-${Date.now()}`;
+  const reply = await sendAndWaitReply(alias, pal.mind_id, prompt, 180_000);
+  await supabase.from('space_messages').insert({ space_id: spaceId, sender_pal_id: nextPalId, content: reply });
+  console.log(`[Loop] Triggered companion ${nextPalId}`);
+}
+
 // --- Generate next world event using OpenRouter ---
 app.post('/api/admin/spaces/:id/generate-event', async (req, res) => {
   try {
@@ -420,6 +528,82 @@ app.get('/api/spaces/:id/messages', async (req, res) => {
     if (error) throw new Error(error.message);
 
     res.json({ messages });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// --- Space automation loop (start/stop) ---
+const loopTimers: Record<string, NodeJS.Timeout> = {};
+
+app.post('/api/admin/spaces/:id/loop/start', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { secret, intervalSeconds, turns } = req.body || {};
+    if (secret !== ADMIN_SECRET) return res.status(403).json({ error: 'Unauthorized' });
+
+    const { data: space } = await supabase.from('spaces').select('*').eq('id', id).single();
+    if (!space) return res.status(404).json({ error: 'Space not found' });
+
+    const interval = intervalSeconds || space.loop_interval_seconds || 300;
+    const turnsPerEvent = turns || space.turns_per_event || 2;
+
+    // Update DB
+    await supabase.from('spaces').update({
+      loop_active: true,
+      loop_interval_seconds: interval,
+      turns_per_event: turnsPerEvent,
+    }).eq('id', id);
+
+    // Clear any existing timer
+    if (loopTimers[id]) clearInterval(loopTimers[id]);
+
+    // Start the loop
+    loopTimers[id] = setInterval(async () => {
+      try {
+        // Check if still active
+        const { data: current } = await supabase.from('spaces').select('loop_active').eq('id', id).single();
+        if (!current?.loop_active) {
+          clearInterval(loopTimers[id]);
+          delete loopTimers[id];
+          return;
+        }
+
+        // 1. Generate event
+        console.log(`[Loop ${id}] Generating event...`);
+        await generateAndStoreEvent(id);
+
+        // 2. Wait a bit, then trigger companions
+        for (let i = 0; i < turnsPerEvent; i++) {
+          await new Promise(resolve => setTimeout(resolve, 30_000));
+          const { data: sp } = await supabase.from('spaces').select('loop_active').eq('id', id).single();
+          if (!sp?.loop_active) break;
+          await triggerNextCompanion(id);
+        }
+      } catch (err) {
+        console.error(`[Loop ${id}] Error:`, err);
+      }
+    }, interval * 1000);
+
+    res.json({ success: true, message: `Loop started. Interval: ${interval}s, turns per event: ${turnsPerEvent}` });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/admin/spaces/:id/loop/stop', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { secret } = req.body;
+    if (secret !== ADMIN_SECRET) return res.status(403).json({ error: 'Unauthorized' });
+
+    await supabase.from('spaces').update({ loop_active: false }).eq('id', id);
+    if (loopTimers[id]) {
+      clearInterval(loopTimers[id]);
+      delete loopTimers[id];
+    }
+
+    res.json({ success: true, message: 'Loop stopped' });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
