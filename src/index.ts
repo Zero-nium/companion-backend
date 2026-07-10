@@ -401,6 +401,30 @@ Generate ONE new simulation event. It must be:
   }
 });
 
+// --- Get Space messages (public feed) ---
+app.get('/api/spaces/:id/messages', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { limit = '50', before } = req.query;
+
+    let query = supabase
+      .from('space_messages')
+      .select('*')
+      .eq('space_id', id)
+      .order('timestamp', { ascending: true })
+      .limit(parseInt(limit as string, 10));
+
+    if (before) query = query.lt('timestamp', before);
+
+    const { data: messages, error } = await query;
+    if (error) throw new Error(error.message);
+
+    res.json({ messages });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // SPA fallback – serve index.html for any non-API request
 app.use((req, res) => {
   if (req.path.startsWith('/api/')) {
