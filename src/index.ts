@@ -651,6 +651,12 @@ app.use((req, res) => {
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
   console.log(`Backend running on port ${PORT}`);
+  // Self-ping to prevent Render sleep
+  setInterval(async () => {
+    try {
+      await fetch('http://localhost:' + PORT + '/api/health');
+    } catch {}
+  }, 10 * 60 * 1000); // every 10 minutes
 });
 
 export default app;
