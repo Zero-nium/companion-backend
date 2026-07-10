@@ -475,6 +475,20 @@ Generate ONE new simulation event. It must be:
     const json = await response.json() as { choices?: { message?: { content?: string } }[] };
     const eventText = json.choices?.[0]?.message?.content?.trim();
     if (!eventText) throw new Error('No event generated – empty response from model');
+    
+    // Validate event against constraints
+  const forbiddenKeywords = [
+    'World Weaver', 'world weaver',
+    'Thread of Fate', 'Weave of Reality', 'Tapestry of Time', 'Knot of Destiny',
+    'powers', 'supernatural', 'magic', 'spell',
+    'you are the', 'your role', 'your job', 'you can see and manipulate',
+    'metallic note that is not from the book' // specific to our earlier prompt
+  ];
+  const violates = forbiddenKeywords.some(kw => eventText.toLowerCase().includes(kw.toLowerCase()));
+  if (violates) {
+    console.log(`[Loop] Rejected event (contains forbidden keyword): ${eventText}`);
+    throw new Error('Generated event violates logic constraints; retrying.');
+  }   
 
     // 5. Store the event
     const content = `[World Event] ${eventText}`;
