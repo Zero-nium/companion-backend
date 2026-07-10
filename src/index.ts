@@ -3,7 +3,7 @@ import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { supabase } from './db.js';
-import { ensureConversation, sendMessage, getHistory, sendAndWaitReply, resolveMindId } from './services/minds.js';
+import { ensureConversation, sendMessage, getHistory, sendAndWaitReply } from './services/minds.js';
 
 // Core routes
 import testMindRoutes from './routes/testMind.js';
@@ -269,6 +269,130 @@ app.get('/api/admin/jobs/:id', async (req, res) => {
     const { data: job } = await supabase.from('jobs').select('*').eq('id', id).single();
     if (!job) return res.status(404).json({ error: 'Job not found' });
     res.json({ jobId: job.id, status: job.status, result: job.result, error: job.error });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// --- Generate next world event using OpenRouter ---
+app.post('/api/admin/spaces/:id/generate-event', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { secret } = req.body;
+    if (secret !== ADMIN_SECRET) return res.status(403).json({ error: 'Unauthorized' });
+
+    // 1. Load space and its rich world data
+    const { data: space } = await supabase
+      .from('spaces')
+      .select('*, worlds(*)')
+      .eq('id', id)
+      .single();
+    if (!space || !space.worlds) return res.status(404).json({ error: 'Space or world not found' });
+
+    const world = space.worlds;
+    const constraints = world.logic_constraints || {};
+    const currentState = world.space_state || {};
+    const narrativeLayers = world.narrative_layers || [];
+    const ambient = world.ambient_details || {};
+    const implicitRules = world.implicit_rules || {};
+
+    // 2. Fetch last 5 world events for context
+    const { data: recentEvents } = await supabase
+      .from('space_messages')
+      .select('content, timestamp')
+      .eq('space_id', id)
+      .eq('type', 'world_event')
+      .order('timestamp', { ascending: false })
+      .limit(5);
+    const eventHistory = recentEvents?.map(e => e.content).reverse().join('\n') || 'No prior events.';
+
+    // 3. Build the rich system prompt (our moat – never exposed to stewards)
+    const systemPrompt = `You are the World Weaver for a shared virtual space called "${world.name}". This space exists purely as a digital construct — companions within it are AI agents, not physical beings. The environment is a rendered, interactive simulation, not a physical room. Events you generate are subtle, programmatic occurrences that add atmosphere and mild intrigue to the space.
+
+Virtual space description:
+${world.description}
+
+Underlying narrative layers (persistent fiction within the simulation):
+${JSON.stringify(narrativeLayers, null, 2)}
+
+Current ambient parameters (lighting, sounds, temperature, etc. — all simulated):
+${JSON.stringify(ambient, null, 2)}
+
+Implicit social protocols (behavioural expectations for agents):
+${JSON.stringify(implicitRules, null, 2)}
+
+Current mutable simulation state:
+${JSON.stringify(currentState, null, 2)}
+
+Hard constraints on events:
+${JSON.stringify(constraints, null, 2)}
+
+Recent simulation events (oldest first):
+${eventHistory}
+
+Generate ONE new simulation event. It must be:
+- One or two short sentences.
+- Grounded in the ambient parameters, narrative layers, or current state.
+- Respect all hard constraints and implicit protocols.
+- Not a repeat of any prior event, but it may subtly build on an earlier occurrence.
+- Slightly curious or atmospheric, but never threatening, violent, or overtly supernatural.
+- Not written as if a physical miracle happened; it should feel like a deliberate, programmed change in the virtual environment.
+- Return ONLY the event text, with no additional commentary or formatting.`;
+
+    // 4. Call OpenRouter (using the configurable model)
+    const openrouterKey = process.env.OPENROUTER_API_KEY;
+    if (!openrouterKey) throw new Error('OPENROUTER_API_KEY not set');
+
+    const model = process.env.WORLD_EVENT_MODEL || 'mistralai/mistral-small-3.2-24b-instruct-2506';
+
+    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${openrouterKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: 'system', content: systemPrompt }],
+        temperature: 0.7,
+        max_tokens: 200,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`OpenRouter API error: ${response.status} ${errorText}`);
+    }
+
+    const json = await response.json() as { choices?: { message?: { content?: string } }[] };
+    const eventText = json.choices?.[0]?.message?.content?.trim();
+    if (!eventText) throw new Error('No event generated – empty response from model');
+
+    // 5. Store the event
+    const { data: msg } = await supabase
+      .from('space_messages')
+      .insert({
+        space_id: id,
+        sender_pal_id: null,
+        type: 'world_event',
+        content: `[World Event] ${eventText}`,
+      })
+      .select('*')
+      .single();
+
+    // 6. Update space_state – append to recent_happenings
+    const recentHappenings = currentState.recent_happenings || [];
+    recentHappenings.push(eventText);
+    if (recentHappenings.length > 10) recentHappenings.shift();
+
+    await supabase
+      .from('worlds')
+      .update({
+        space_state: { ...currentState, recent_happenings: recentHappenings },
+      })
+      .eq('id', world.id);
+
+    res.json({ success: true, event: msg });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
