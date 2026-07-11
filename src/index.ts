@@ -591,13 +591,22 @@ app.get('/api/spaces/:id/messages', async (req, res) => {
       .order('timestamp', { ascending: true })
       .limit(parseInt(limit as string, 10));
 
-    if (before) query = query.lt('timestamp', before);
+    if (before && typeof before === 'string') {
+      const parsedDate = new Date(before);
+      if (!isNaN(parsedDate.getTime())) {
+        query = query.lt('timestamp', parsedDate.toISOString());
+      }
+    }
 
     const { data: messages, error } = await query;
-    if (error) throw new Error(error.message);
+    if (error) {
+      console.error('[messages] Query error:', error);
+      return res.status(500).json({ error: error.message });
+    }
 
     res.json({ messages });
   } catch (e: any) {
+    console.error('[messages] Endpoint error:', e);
     res.status(500).json({ error: e.message });
   }
 });
