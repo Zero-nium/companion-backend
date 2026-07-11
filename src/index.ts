@@ -290,6 +290,7 @@ async function generateAndStoreEvent(spaceId: string) {
   const ambient = world.ambient_details || {};
   const implicitRules = world.implicit_rules || {};
 
+  // Fetch recent world events
   const { data: recentEvents } = await supabase
     .from('space_messages')
     .select('content')
@@ -298,6 +299,19 @@ async function generateAndStoreEvent(spaceId: string) {
     .order('timestamp', { ascending: false })
     .limit(5);
   const eventHistory = recentEvents?.map(e => e.content).reverse().join('\n') || '';
+
+  // Fetch companion states for zone‑aware events (rename variable to avoid conflict)
+  const { data: spaceState } = await supabase
+    .from('spaces')
+    .select('companion_states')
+    .eq('id', spaceId)
+    .single();
+  const states = spaceState?.companion_states || {};
+  let agentPositions = '';
+  for (const [palId, state] of Object.entries(states)) {
+    const { data: pal } = await supabase.from('pals').select('display_name').eq('id', palId).single();
+    agentPositions += `${pal?.display_name || 'A companion'} is in the ${(state as any).position || 'library'}, ${(state as any).action || 'idle'}.\n`;
+  }
 
   const systemPrompt = `You are the event engine for a shared virtual space called "${world.name}". Your only task is to output the next tiny, atmospheric change in the simulation.
 
@@ -322,9 +336,14 @@ ${JSON.stringify(constraints, null, 2)}
 Recent simulation events (oldest first):
 ${eventHistory}
 
+Current agent positions:
+${agentPositions}
+
 Output ONE short event. It must be:
 - One or two sentences maximum.
 - A subtle, atmospheric change in the virtual environment (e.g., a book falls, a lamp flickers, a distant sound).
+- Specify which zone the event occurs in (e.g., "In the west stacks...").
+- Consider agent positions: an event in an empty zone affects no one directly, while an event near a companion may prompt their reaction.
 - Fully consistent with the constraints, ambient parameters, and implicit protocols.
 - NOT a character speaking, NOT a narrative, NOT a role‑playing prompt, NOT a meta‑reference to itself.
 - Do NOT use the words "Weaver", "tapestry", "fate", "powers", "mortal", "cosmic", "destiny", "magic", or "supernatural".
@@ -396,6 +415,7 @@ async function triggerNextCompanion(spaceId: string) {
   const participants = space.participants;
   if (!participants?.length) return;
 
+  // Determine next speaker (round‑robin)
   const { data: lastMsg } = await supabase
     .from('space_messages')
     .select('sender_pal_id')
@@ -411,10 +431,34 @@ async function triggerNextCompanion(spaceId: string) {
   }
   const nextPalId = participants[nextIndex];
 
-  const { data: pal } = await supabase.from('pals').select('mind_id').eq('id', nextPalId).single();
+  const { data: pal } = await supabase.from('pals').select('mind_id, display_name').eq('id', nextPalId).single();
   if (!pal?.mind_id) throw new Error('Pal not found');
 
-  const { data: world } = await supabase.from('worlds').select('initial_prompt').eq('id', space.world_id).single();
+  // Load world data for context
+  const { data: world } = await supabase.from('worlds').select('*').eq('id', space.world_id).single();
+  const spatialMap = world?.spatial_map || {};
+  const embodiment = world?.agent_embodiment || {};
+  const physics = world?.physical_rules || {};
+
+  // Get all companion states
+  const states = space.companion_states || {};
+  const myState = states[nextPalId] || { position: 'unknown', action: 'idle', carrying: null };
+
+  // Describe positions of all companions
+  let othersDesc = '';
+  for (const pid of participants) {
+    if (pid === nextPalId) continue;
+    const otherPal = await supabase.from('pals').select('display_name').eq('id', pid).single();
+    const otherState = states[pid] || {};
+    othersDesc += `${otherPal?.data?.display_name || 'Another companion'} is in the ${otherState.position || 'library'}, ${otherState.action || 'idle'}.\n`;
+  }
+
+  // Build zone description for current companion
+  const zoneName = myState.position || 'main reading room';
+  const zone = spatialMap.zones?.find((z: any) => z.name === zoneName) || spatialMap.zones?.[0];
+  const zoneDesc = zone ? zone.description : 'A quiet corner of the library.';
+
+  // Fetch recent messages
   const { data: recentMessages } = await supabase
     .from('space_messages')
     .select('content')
@@ -422,11 +466,73 @@ async function triggerNextCompanion(spaceId: string) {
     .order('timestamp', { ascending: true })
     .limit(10);
   const historyText = recentMessages?.map(m => m.content).join('\n') || '';
-  const prompt = `${world?.initial_prompt || ''}\n\nRecent conversation:\n${historyText}\n\nIt's your turn to speak. Respond naturally to the conversation around you.`;
+
+  // Assemble the rich prompt
+  const prompt = `You are ${pal.display_name}, a companion in the Grand Library at Twilight.
+
+Your current position: ${zoneName}. ${zoneDesc}
+What you are doing: ${myState.action || 'idle'}.
+What you are carrying: ${myState.carrying || 'nothing'}.
+
+Other companions:
+${othersDesc}
+
+Your embodiment: ${JSON.stringify(embodiment)}
+Physical rules: ${JSON.stringify(physics)}
+
+Recent conversation:
+${historyText}
+
+It's your turn. You can:
+- Speak to another companion (address them by name).
+- Comment on your surroundings.
+- Move to a different zone (list available: ${spatialMap.zones?.map((z:any) => z.name).join(', ')}).
+- Interact with an object in your current zone.
+- Observe quietly.
+
+Choose ONE action that feels natural for your personality. If you speak, keep it in character.
+At the end of your reply, add a line in parentheses describing your action, e.g.:
+(action: move to west stacks)
+(action: pick up the fallen book)
+(action: remain seated, continue writing)
+
+Do NOT repeat previous events verbatim. Progress the scene.`;
 
   const alias = `trigger-${spaceId}-${Date.now()}`;
   const reply = await sendAndWaitReply(alias, pal.mind_id, prompt, 180_000);
-  await supabase.from('space_messages').insert({ space_id: spaceId, sender_pal_id: nextPalId, content: reply });
+
+  // Store reply
+  await supabase.from('space_messages').insert({
+    space_id: spaceId,
+    sender_pal_id: nextPalId,
+    content: reply,
+  });
+
+  // Parse action and update state
+  const actionMatch = reply.match(/\(action:\s*(.+?)\)/i);
+  if (actionMatch) {
+    const actionText = actionMatch[1].trim();
+    const newState = { ...states[nextPalId] };
+
+    // Simple action parsing
+    if (actionText.startsWith('move to ')) {
+      newState.position = actionText.replace('move to ', '');
+      newState.action = 'arriving';
+    } else if (actionText.startsWith('pick up ')) {
+      newState.carrying = actionText.replace('pick up ', '');
+      newState.action = 'picked up ' + newState.carrying;
+    } else if (actionText.startsWith('put down ')) {
+      newState.carrying = null;
+      newState.action = 'put down ' + actionText.replace('put down ', '');
+    } else {
+      newState.action = actionText;
+    }
+
+    states[nextPalId] = newState;
+    await supabase.from('spaces').update({ companion_states: states }).eq('id', spaceId);
+    console.log(`[Loop] ${pal.display_name} action: ${actionText}, new position: ${newState.position}`);
+  }
+
   console.log(`[Loop] Triggered companion ${nextPalId}`);
 }
 
