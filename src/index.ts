@@ -253,7 +253,7 @@ async function runSpaceTriggerJob(jobId: string) {
   console.log(`[SpaceTrigger ${jobId}] Sending prompt to ${mindId}...`);
 
   const freshAlias = `trigger-${space_id}-${Date.now()}`;
-  const reply = await sendAndWaitReply(freshAlias, mindId, prompt, 300_000);
+  const reply = await sendAndWaitReply(freshAlias, mindId, prompt, 600_000);
   console.log(`[SpaceTrigger ${jobId}] Reply received.`);
 
   await supabase.from('space_messages').insert({ space_id, sender_pal_id: nextPalId, content: reply });
@@ -499,7 +499,7 @@ At the end of your reply, add a line in parentheses describing your action, e.g.
 Do NOT repeat previous events verbatim. Progress the scene.`;
 
   const alias = `trigger-${spaceId}-${Date.now()}`;
-  const reply = await sendAndWaitReply(alias, pal.mind_id, prompt, 180_000);
+  const reply = await sendAndWaitReply(alias, pal.mind_id, prompt, 300_000);
 
   // Store reply
   await supabase.from('space_messages').insert({
