@@ -588,7 +588,7 @@ app.get('/api/spaces/:id/messages', async (req, res) => {
       .from('space_messages')
       .select('*')
       .eq('space_id', id)
-      .order('timestamp', { ascending: true })
+      .order('timestamp', { ascending: false })
       .limit(parseInt(limit as string, 10));
 
     if (before && typeof before === 'string') {
@@ -603,6 +603,9 @@ app.get('/api/spaces/:id/messages', async (req, res) => {
       console.error('[messages] Query error:', error);
       return res.status(500).json({ error: error.message });
     }
+
+    // Reverse so newest appears first in the UI (ascending order after fetch)
+    messages?.reverse();
 
     res.json({ messages });
   } catch (e: any) {
