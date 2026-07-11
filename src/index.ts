@@ -653,7 +653,12 @@ app.post('/api/admin/spaces/:id/loop/start', async (req, res) => {
           await new Promise(resolve => setTimeout(resolve, 30_000));
           const { data: sp } = await supabase.from('spaces').select('loop_active').eq('id', id).single();
           if (!sp?.loop_active) break;
-          await triggerNextCompanion(id);
+          try {
+            await triggerNextCompanion(id);
+          } catch (err: any) {
+            console.error(`[Loop ${id}] Companion ${i + 1}/${turnsPerEvent} failed:`, err.message);
+            // continue to the next companion
+          }
         }
       } catch (err) {
         console.error(`[Loop ${id}] Error:`, err);
