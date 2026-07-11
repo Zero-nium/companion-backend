@@ -561,6 +561,23 @@ app.post('/api/admin/spaces/:id/generate-event', async (req, res) => {
   }
 });
 
+// --- Get single Space details ---
+app.get('/api/spaces/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { data: space } = await supabase
+      .from('spaces')
+      .select('*')
+      .eq('id', id)
+      .single();
+
+    if (!space) return res.status(404).json({ error: 'Space not found' });
+    res.json(space);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // --- Get Space messages (public feed) ---
 app.get('/api/spaces/:id/messages', async (req, res) => {
   try {
